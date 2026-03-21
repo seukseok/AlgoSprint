@@ -9,8 +9,13 @@ const links = [
 ];
 
 export async function TopNav() {
-  const session = await auth();
-  const isSignedIn = Boolean(session?.user?.email);
+  let isSignedIn = false;
+  try {
+    const session = await auth();
+    isSignedIn = Boolean(session?.user?.email);
+  } catch {
+    isSignedIn = false;
+  }
 
   return (
     <header className="border-b border-black/10 bg-white/90 backdrop-blur dark:border-white/10 dark:bg-[#0d1117]/90">
