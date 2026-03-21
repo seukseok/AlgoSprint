@@ -322,6 +322,7 @@ async function runProcess(
   const start = Date.now();
 
   return new Promise((resolve) => {
+    let settled = false;
     const env = Object.fromEntries(
       RUNNER_RUNTIME.envAllowlist
         .map((key) => [key, process.env[key]])
@@ -376,7 +377,25 @@ async function runProcess(
       stderrChunks.push(chunk);
     });
 
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const elapsedMs = Date.now() - start;
+      const isolationTag = RUNNER_EXECUTION.mode === "isolated" ? ERROR_CODES.RUNNER_ISOLATION_UNAVAILABLE : ERROR_CODES.RUNNER_RUNTIME_FAILED;
+      resolve({
+        ok: false,
+        stdout: "",
+        stderr: `[${isolationTag}] ${error.message}`,
+        exitCode: null,
+        elapsedMs,
+        timedOut: false,
+      });
+    });
+
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       let stderr = Buffer.concat(stderrChunks).toString("utf8");
@@ -385,6 +404,12 @@ async function runProcess(
       }
       if (timedOut) {
         stderr += `\n[${ERROR_CODES.RUNNER_EXEC_TIMEOUT}] process timeout`;
+      }
+      if (RUNNER_EXECUTION.mode === "isolated" && code !== 0 && stderr.includes("docker unavailable")) {
+        stderr += `\n[${ERROR_CODES.RUNNER_ISOLATION_UNAVAILABLE}] isolated runtime unavailable`;
+      }
+      if (RUNNER_EXECUTION.mode === "isolated" && code !== 0 && stderr.includes("docker run")) {
+        stderr += `\n[${ERROR_CODES.RUNNER_ISOLATION_FAILED}] isolated runtime execution failed`;
       }
       stderr = safeTruncate(stderr, RUNNER_LIMITS.stderrLogLimitBytes);
       const elapsedMs = Date.now() - start;

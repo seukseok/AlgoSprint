@@ -1,20 +1,35 @@
-# DEPLOYMENT (Milestone 9 hardened)
+# DEPLOYMENT (Milestone 10)
 
-## 필수 보안 환경변수
+## 필수 환경변수
 
 - `DATABASE_URL`
 - `NEXTAUTH_SECRET`
 - `NEXTAUTH_URL`
-- `WORKER_API_TOKEN` (강한 랜덤값)
+- `WORKER_API_TOKEN`
 
-권장:
-- `QUEUE_WORKER_MODE=external`
-- `WORKER_AUTH_TOLERANCE_MS=300000`
-- `RUNNER_EXECUTION_MODE=isolated`
-- `RUNNER_ISOLATED_COMMAND=<your isolated runner entrypoint>`
-- `RUNNER_CPU_TIME_SECONDS=2`
-- `RUNNER_MEMORY_LIMIT_KB=262144`
-- `NEXT_PUBLIC_RUNNER_SAFE_MODE=1`
+## 권장 운영값 (production)
+
+```env
+QUEUE_WORKER_MODE=external
+RUNNER_EXECUTION_MODE=isolated
+RUNNER_ISOLATED_COMMAND="bash ./scripts/isolated-runner.sh"
+RUNNER_ISOLATED_IMAGE=gcc:14
+RUNNER_ISOLATED_NETWORK_MODE=none
+RUNNER_CPU_TIME_SECONDS=2
+RUNNER_MEMORY_LIMIT_KB=262144
+NEXT_PUBLIC_RUNNER_EXECUTION_MODE=isolated
+NEXT_PUBLIC_RUNNER_SANDBOXED=1
+NEXT_PUBLIC_RUNNER_SAFE_MODE=1
+```
+
+## 배포 전 체크
+
+1. `npm run smoke`
+2. `/api/health`에서 아래 확인
+   - `status=ok`
+   - `checks.runnerIsolationReady=true`
+   - `runnerReadiness.mode="isolated"`
+3. `/api/metrics`에서 queue/DLQ 확인
 
 ## 외부 워커 구성
 
@@ -22,20 +37,13 @@
 - `QUEUE_WORKER_MODE=external`
 - `WORKER_API_TOKEN=<same-token>`
 
-워커(별도 서버/컨테이너):
+워커:
 - `WORKER_BASE_URL=https://<your-domain>`
 - `WORKER_API_TOKEN=<same-token>`
-- `WORKER_LOOP_INTERVAL_MS=1500`
 - 실행: `npm run worker:loop`
-
-## 운영 점검
-
-- `/api/health`: `runnerExecutionMode`, `safeMode`, queue 상태 확인
-- `/api/metrics`: `deadLetterCount`, `slo` 확인
-- `/api/admin/queue-maintenance`: DLQ 조회/재처리
 
 ## 단계별 권장
 
-1. 최소: local 모드 + safe mode banner + worker 서명 인증 적용
-2. 중간: Redis 연결 + external worker 분리
-3. 권장: isolated runner 훅(컨테이너/VM) 적용 후 public 오픈
+1. 최소: local 모드 + safe mode + 인증/레이트리밋
+2. 중간: Redis + external worker
+3. 권장: isolated runner + health preflight ok 후 public 오픈

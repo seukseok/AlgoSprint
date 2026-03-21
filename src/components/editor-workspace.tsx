@@ -22,7 +22,8 @@ const initialOutputs: OutputMap = {
   submit: "제출 결과가 여기에 표시됩니다.",
 };
 
-const IS_NON_SANDBOXED = process.env.NEXT_PUBLIC_RUNNER_SANDBOXED !== "1";
+const PUBLIC_EXEC_MODE = process.env.NEXT_PUBLIC_RUNNER_EXECUTION_MODE ?? "local";
+const IS_NON_SANDBOXED = process.env.NEXT_PUBLIC_RUNNER_SANDBOXED !== "1" || PUBLIC_EXEC_MODE !== "isolated";
 
 export function EditorWorkspace({
   problemId,
@@ -181,7 +182,7 @@ export function EditorWorkspace({
 
       {IS_NON_SANDBOXED ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/70 dark:bg-amber-900/20 dark:text-amber-200">
-          경고: 현재 실행 환경은 컨테이너/VM 샌드박스가 아닙니다. 신뢰 가능한 코드만 실행하고, 외부 공개 환경에서는 반드시 격리 런타임을 사용하세요.
+          경고: 현재 실행 환경은 비격리 모드(local)입니다. 신뢰 가능한 코드만 실행하고, 외부 공개 환경에서는 반드시 RUNNER_EXECUTION_MODE=isolated + 컨테이너 격리를 사용하세요.
         </div>
       ) : null}
 

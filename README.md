@@ -2,7 +2,7 @@
 
 Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 8 scope (distributed-ready infra with minimal complexity)
+## Milestone 10 scope (isolated runner wrapper + production finish-up)
 
 Implemented end-to-end:
 - Optional Redis integration layer (`REDIS_URL`) for distributed-friendly queue lease + rate limiting backend
@@ -146,7 +146,23 @@ npm run worker:loop
 ```bash
 npm run lint
 npm run build
+npm run runner:selftest
+npm run smoke
 ```
+
+## Isolated runner quick start
+
+```bash
+cp .env.example .env
+# set:
+# RUNNER_EXECUTION_MODE=isolated
+# RUNNER_ISOLATED_COMMAND="bash ./scripts/isolated-runner.sh"
+# NEXT_PUBLIC_RUNNER_EXECUTION_MODE=isolated
+# NEXT_PUBLIC_RUNNER_SANDBOXED=1
+```
+
+Health preflight:
+- `GET /api/health` → `runnerReadiness`, `checks.runnerIsolationReady`
 
 ## Runtime guardrails (explicit constants)
 
