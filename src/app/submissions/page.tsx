@@ -3,8 +3,13 @@ import { SubmissionHistoryPanel } from "@/components/submission-history-panel";
 import { auth } from "@/lib/auth";
 
 export default async function SubmissionsPage() {
-  const session = await auth();
-  if (!session?.user?.email) redirect("/auth/signin");
+  try {
+    const session = await auth();
+    if (!session?.user?.email) redirect("/auth/signin");
+  } catch {
+    redirect("/auth/signin");
+  }
+
   return (
     <section className="space-y-4">
       <div>

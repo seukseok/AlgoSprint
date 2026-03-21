@@ -4,8 +4,14 @@ import { isAdminEmail } from "@/lib/session-user";
 import { HarnessClient } from "@/components/harness-client";
 
 export default async function AdminHarnessPage() {
-  const session = await auth();
-  const email = session?.user?.email;
+  let email: string | null | undefined;
+  try {
+    const session = await auth();
+    email = session?.user?.email;
+  } catch {
+    email = null;
+  }
+
   if (!email) redirect("/auth/signin");
   if (!isAdminEmail(email)) redirect("/");
 
