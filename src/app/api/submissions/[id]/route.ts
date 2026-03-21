@@ -11,7 +11,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   const submission = await prisma.submission.findUnique({ where: { id } });
 
   if (!submission || submission.userId !== session.user.id) {
-    return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    return NextResponse.json({ error: "제출 정보를 찾을 수 없습니다." }, { status: 404 });
   }
 
   await prisma.submission.update({

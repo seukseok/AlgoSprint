@@ -77,15 +77,19 @@ export function EditorWorkspace({
 
   const runAction = useCallback(
     async (action: JudgeAction) => {
+      if (running) return;
       setRunning(action);
       setActiveOutputTab(action);
-      const result = await executeJudgeAction({ action, source: code, stdin, problemId });
-      const metrics = result.timeMs || result.memoryKb ? `\n\n[metrics] time=${result.timeMs ?? "-"}ms memory=${result.memoryKb ?? "-"}KB` : "";
-      const text = `[${result.action.toUpperCase()}] ${result.success ? "성공" : "실패"}\n${result.output}${metrics}`;
-      setOutputs((prev) => ({ ...prev, [action]: text }));
-      setRunning(null);
+      try {
+        const result = await executeJudgeAction({ action, source: code, stdin, problemId });
+        const metrics = result.timeMs || result.memoryKb ? `\n\n[metrics] time=${result.timeMs ?? "-"}ms memory=${result.memoryKb ?? "-"}KB` : "";
+        const text = `[${result.action.toUpperCase()}] ${result.success ? "성공" : "실패"}\n${result.output}${metrics}`;
+        setOutputs((prev) => ({ ...prev, [action]: text }));
+      } finally {
+        setRunning(null);
+      }
     },
-    [code, stdin, problemId],
+    [code, stdin, problemId, running],
   );
 
   useEffect(() => {
@@ -147,7 +151,7 @@ export function EditorWorkspace({
               disabled={buttonDisabled}
               className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 disabled:opacity-50 dark:border-white/20 dark:hover:bg-white/10"
             >
-              {action.label}
+              {running === action.key ? `${action.label} 처리 중...` : action.label}
             </button>
           ))}
           <button

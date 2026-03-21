@@ -26,10 +26,12 @@ async function executeServerAction(params: {
   });
 
   if (!response.ok) {
+    const fallback = response.status === 401 ? "로그인 후 이용해 주세요." : "서버 실행 요청에 실패했습니다.";
+    const errorMessage = await readError(response, fallback);
     return {
       action: params.action,
       success: false,
-      output: response.status === 401 ? "로그인 후 이용해 주세요." : "서버 실행 요청에 실패했습니다.",
+      output: errorMessage,
     };
   }
 
@@ -48,10 +50,11 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
   });
 
   if (!submitResponse.ok) {
+    const fallback = submitResponse.status === 401 ? "로그인 후 이용해 주세요." : "제출 요청에 실패했습니다.";
     return {
       action: "submit",
       success: false,
-      output: submitResponse.status === 401 ? "로그인 후 이용해 주세요." : "제출 요청에 실패했습니다.",
+      output: await readError(submitResponse, fallback),
     };
   }
 
@@ -132,4 +135,16 @@ function toVerdictLabel(verdict: SafeCaseSummary["verdict"]) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const body = (await response.json()) as { error?: string; retryAfterSec?: number };
+    if (response.status === 429 && body.retryAfterSec) {
+      return `${body.error ?? fallback}\n재시도 가능 시간: ${body.retryAfterSec}초 후`;
+    }
+    return body.error ?? fallback;
+  } catch {
+    return fallback;
+  }
 }

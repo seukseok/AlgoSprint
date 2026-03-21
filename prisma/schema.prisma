@@ -21,6 +21,15 @@ enum SubmissionStatus {
   COMPILATION_ERROR
   RUNTIME_ERROR
   TIME_LIMIT_EXCEEDED
+  FAILED
+}
+
+enum QueueItemStatus {
+  PENDING
+  RUNNING
+  RETRYING
+  COMPLETED
+  FAILED
 }
 
 model User {
@@ -71,11 +80,32 @@ model Submission {
   feedbackMessage   String?
   userId            String
   problemId         String
+  queueItem         JudgeQueueItem?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
   user    User    @relation(fields: [userId], references: [id])
   problem Problem @relation(fields: [problemId], references: [id])
+}
+
+model JudgeQueueItem {
+  id            String         @id @default(cuid())
+  submissionId  String         @unique
+  status        QueueItemStatus @default(PENDING)
+  attemptCount  Int            @default(0)
+  maxRetries    Int            @default(3)
+  nextAttemptAt DateTime       @default(now())
+  leaseId       String?
+  leaseExpiresAt DateTime?
+  lastError     String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
 }
 
 model Run {

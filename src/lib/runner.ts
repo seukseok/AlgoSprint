@@ -5,7 +5,8 @@ import { spawn } from "node:child_process";
 import { problemCatalog } from "./problem-catalog";
 import { hiddenTestCatalog, InternalTestcase } from "./problem-hidden-tests";
 import { validateProblemCatalogIntegrity } from "./problem-catalog-validator";
-import { RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS } from "./runner-config";
+import { RUNNER_COMPILER, RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS, RUNNER_RUNTIME } from "./runner-config";
+import { logEvent } from "./logger";
 
 export type ExecutionResult = {
   success: boolean;
@@ -57,8 +58,9 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
 
   try {
     await fs.writeFile(sourcePath, source, "utf8");
-    const compile = await runProcess("g++", ["-std=c++17", "-O2", "-pipe", sourcePath, "-o", binaryPath], {
+    const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
       timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
+      stage: "compile",
     });
 
     if (!compile.ok) {
@@ -73,7 +75,7 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
       };
     }
 
-    const run = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin });
+    const run = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin, stage: "run" });
     return {
       success: !run.timedOut && run.exitCode === 0,
       stdout: run.stdout,
@@ -127,8 +129,9 @@ export async function judgeSubmission(problemId: string, source: string) {
 
   try {
     await fs.writeFile(sourcePath, source, "utf8");
-    const compile = await runProcess("g++", ["-std=c++17", "-O2", "-pipe", sourcePath, "-o", binaryPath], {
+    const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
       timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
+      stage: "compile",
     });
 
     if (!compile.ok) {
@@ -148,7 +151,7 @@ export async function judgeSubmission(problemId: string, source: string) {
 
     for (let i = 0; i < tests.length; i += 1) {
       const tc = tests[i];
-      const result = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin: tc.input });
+      const result = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin: tc.input, stage: "judge" });
       totalElapsed += result.elapsedMs;
       latestExitCode = result.exitCode;
 
@@ -277,12 +280,18 @@ function failureFromForbidden(message: string): ExecutionResult {
 async function runProcess(
   command: string,
   args: string[],
-  options: { timeoutMs: number; stdin?: string },
+  options: { timeoutMs: number; stdin?: string; stage: "compile" | "run" | "judge" },
 ): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null; elapsedMs: number; timedOut: boolean }> {
   const start = Date.now();
 
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: "pipe" });
+    const env = Object.fromEntries(
+      RUNNER_RUNTIME.envAllowlist
+        .map((key) => [key, process.env[key]])
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+
+    const child = spawn(command, args, { stdio: "pipe", env: { ...process.env, ...env } });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let total = 0;
@@ -323,9 +332,19 @@ async function runProcess(
       }
       stderr = safeTruncate(stderr, RUNNER_LIMITS.stderrLogLimitBytes);
       const elapsedMs = Date.now() - start;
+      const ok = !timedOut && !killedForOutput && code === 0;
+
+      logEvent(ok ? "info" : "warn", "runner.process.finished", {
+        stage: options.stage,
+        command,
+        exitCode: code,
+        elapsedMs,
+        timedOut,
+        killedForOutput,
+      });
 
       resolve({
-        ok: !timedOut && !killedForOutput && code === 0,
+        ok,
         stdout,
         stderr,
         exitCode: code,

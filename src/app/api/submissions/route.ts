@@ -1,35 +1,37 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { enqueueSubmission } from "@/lib/queue";
+import { enqueueSubmission, startJudgeQueueWorker } from "@/lib/queue";
 import { requireSessionUser } from "@/lib/session-user";
-
-type SubmitRequest = {
-  problemId: string;
-  source: string;
-  language?: string;
-};
+import { checkRateLimit, getClientIp, rateLimitErrorResponse } from "@/lib/rate-limit";
+import { validateSubmitPayload } from "@/lib/validation";
 
 export async function POST(request: Request) {
   const session = await requireSessionUser();
   if (session.error) return session.error;
 
-  const body = (await request.json()) as SubmitRequest;
+  const ip = getClientIp(request);
+  const limited = checkRateLimit("submit", session.user.id, ip);
+  if (limited.limited) {
+    return rateLimitErrorResponse("submit", limited.retryAfterSec, limited.headers);
+  }
 
-  if (!body?.problemId || !body.source) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  const payload = validateSubmitPayload(await request.json());
+  if (!payload.ok) {
+    return NextResponse.json({ error: payload.error }, { status: 400 });
   }
 
   const queued = await prisma.submission.create({
     data: {
-      problemId: body.problemId,
+      problemId: payload.value.problemId,
       userId: session.user.id,
-      source: body.source,
-      language: body.language ?? "cpp17",
+      source: payload.value.source,
+      language: payload.value.language,
       status: "QUEUED",
-      output: "Queued for judging...",
+      output: "채점 대기열에 등록되었습니다.",
     },
   });
 
+  startJudgeQueueWorker();
   await enqueueSubmission(queued.id);
 
   return NextResponse.json({
@@ -77,7 +79,6 @@ export async function GET(request: Request) {
 
       return {
         ...row,
-        testcaseSummary,
         feedback: row.feedbackType
           ? {
               type: row.feedbackType,

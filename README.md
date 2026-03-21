@@ -2,9 +2,22 @@
 
 Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 6 scope (learning feedback + review queue + runtime readiness)
+## Milestone 7 scope (operational hardening + near-production readiness)
 
 Implemented end-to-end:
+- Durable judge queue backed by DB (`JudgeQueueItem`) with startup recovery worker
+- Retry policy with terminal `FAILED` status
+- Lightweight rate limiting for `execute`/`submit` (per-IP + per-user)
+- Korean-first error responses + `Retry-After` support
+- Centralized runner safety policy (`src/lib/runner-safety-policy.ts`)
+- Request payload runtime validation for core APIs
+- Structured JSON logs for queue/judge lifecycle
+- Metrics endpoint (`GET /api/metrics`)
+- Extended health endpoint with queue checks (`GET /api/health`)
+- UX stabilization for duplicate submit spam (pending lock)
+- Ops docs: `docs/OPERATIONS.md`, `docs/PREDEPLOY_CHECKLIST.md`
+
+Also retained Milestone 6 capabilities:
 
 - NextAuth authentication
   - GitHub provider (`GITHUB_ID`, `GITHUB_SECRET`)
@@ -58,7 +71,8 @@ Implemented end-to-end:
 - `PUT /api/drafts/:problemId` — save draft (auth required)
 - `POST /api/admin/queue-test` — enqueue admin test submission (admin/dev only)
 - `GET /api/review-queue` — prioritized retry list from weak topics + failed submissions (auth required)
-- `GET /api/health` — deploy-time sanity/readiness check
+- `GET /api/health` — deploy-time sanity/readiness check (DB + queue + env + runner)
+- `GET /api/metrics` — submission/queue status counters + queue depth
 
 ## Environment setup
 
@@ -116,7 +130,7 @@ npm run build
 
 ## Runtime guardrails (explicit constants)
 
-Defined in `src/lib/runner-config.ts`:
+Defined in `src/lib/runner-safety-policy.ts` (re-exported via `src/lib/runner-config.ts`):
 
 - Max source size: `RUNNER_LIMITS.maxSourceBytes = 128 * 1024` bytes
 - Compile timeout: `RUNNER_LIMITS.compileTimeoutMs = 8000` ms
@@ -131,6 +145,6 @@ This project is still a lightweight dev-focused runner. Do not expose to untrust
 Known gaps:
 
 - No container/VM sandbox isolation (no seccomp/cgroups/jail)
-- In-process queue is not durable/distributed
+- Queue is now durable in DB, but still single-worker (no distributed coordination)
 - Denylist remains heuristic and bypassable
 - No robust per-tenant quota/rate limiting yet
