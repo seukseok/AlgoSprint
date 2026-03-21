@@ -13,14 +13,20 @@ function catalogToDTO(): ProblemDTO[] {
     sampleInput: p.sampleInput,
     sampleOutput: p.sampleOutput,
     starterCode: p.starterCode,
+    conceptGuide: p.conceptGuide,
   }));
+}
+
+function attachGuide(problem: ProblemDTO): ProblemDTO {
+  const guide = problemCatalog.find((item) => item.id === problem.id)?.conceptGuide;
+  return { ...problem, conceptGuide: guide };
 }
 
 export async function getProblems(): Promise<ProblemDTO[]> {
   try {
     await ensureAppData();
     const problems = await prisma.problem.findMany({ orderBy: { createdAt: "asc" } });
-    return problems.map(mapProblem);
+    return problems.map((problem) => attachGuide(mapProblem(problem)));
   } catch {
     return catalogToDTO();
   }
@@ -30,7 +36,7 @@ export async function findProblem(id: string): Promise<ProblemDTO | null> {
   try {
     await ensureAppData();
     const problem = await prisma.problem.findUnique({ where: { id } });
-    return problem ? mapProblem(problem) : null;
+    return problem ? attachGuide(mapProblem(problem)) : null;
   } catch {
     const fallback = catalogToDTO().find((p) => p.id === id);
     return fallback ?? null;

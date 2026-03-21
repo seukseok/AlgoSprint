@@ -11,6 +11,15 @@ export interface Problem {
   sampleOutput: string;
   starterCode: string;
   sampleTests?: { input: string; output: string }[];
+  conceptGuide?: {
+    coreConcepts: string[];
+    approachSteps: string[];
+    pitfalls: string[];
+    complexity: {
+      time: string;
+      space: string;
+    };
+  };
 }
 
 export type JudgeAction = "compile" | "run" | "debug" | "submit";

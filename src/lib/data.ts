@@ -47,6 +47,15 @@ export type ProblemDTO = {
   sampleInput: string;
   sampleOutput: string;
   starterCode: string;
+  conceptGuide?: {
+    coreConcepts: string[];
+    approachSteps: string[];
+    pitfalls: string[];
+    complexity: {
+      time: string;
+      space: string;
+    };
+  };
 };
 
 export function mapProblem(problem: Prisma.ProblemGetPayload<object>): ProblemDTO {
