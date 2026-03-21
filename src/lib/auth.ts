@@ -3,8 +3,8 @@ import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 function devCredentialConfig() {
-  const email = process.env.DEV_LOGIN_EMAIL ?? "dev@algosprint.local";
-  const password = process.env.DEV_LOGIN_PASSWORD ?? "devpass123";
+  const email = (process.env.DEV_LOGIN_EMAIL ?? "dev@algosprint.local").trim().toLowerCase();
+  const password = (process.env.DEV_LOGIN_PASSWORD ?? "devpass123").trim();
   const allow = Boolean(email && password);
   return { email, password, allow };
 }
