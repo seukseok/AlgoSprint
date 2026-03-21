@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { QueueItemStatus, SubmissionStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getQueueDepth, startJudgeQueueWorker } from "@/lib/queue";
+import { getQueueMetrics, startJudgeQueueWorker } from "@/lib/queue";
 
 export async function GET() {
   startJudgeQueueWorker();
 
-  const [submissionsByStatus, queueByStatus, queueDepth] = await Promise.all([
+  const [submissionsByStatus, queueByStatus, queue] = await Promise.all([
     Promise.all(
       Object.values(SubmissionStatus).map(async (status) => ({
         status,
@@ -19,12 +19,18 @@ export async function GET() {
         count: await prisma.judgeQueueItem.count({ where: { status } }),
       })),
     ),
-    getQueueDepth(),
+    getQueueMetrics(),
   ]);
 
   return NextResponse.json({
     timestamp: new Date().toISOString(),
-    queueDepth,
+    queueDepth: queue.depth,
+    queueLagMs: queue.queueLagMs,
+    retryCount: queue.retryCount,
+    failureCount: queue.failureCount,
+    queueEtaSec: queue.etaSeconds,
+    queueMode: queue.mode,
+    workerMode: queue.workerMode,
     submissionsByStatus,
     queueByStatus,
   });

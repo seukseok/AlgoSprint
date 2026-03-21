@@ -3,11 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { inferLearningFeedback } from "@/lib/learning-feedback";
 import { judgeSubmission } from "@/lib/runner";
 import { logEvent } from "@/lib/logger";
+import { getRedisClient, redisMode } from "@/lib/redis";
 
 let started = false;
 let processing = false;
 
 const MAX_RETRIES = 3;
+const REDIS_QUEUE_KEY = "judge:queue:ready";
+const REDIS_LEASE_PREFIX = "judge:lease:";
 
 const FINAL_STATUSES = new Set<SubmissionStatus>([
   SubmissionStatus.ACCEPTED,
@@ -22,15 +25,18 @@ export function isFinalStatus(status: SubmissionStatus) {
   return FINAL_STATUSES.has(status);
 }
 
+export function shouldAutoStartWorker() {
+  return process.env.QUEUE_WORKER_MODE !== "external";
+}
+
 export function startJudgeQueueWorker() {
+  if (!shouldAutoStartWorker()) return;
   if (started) return;
   started = true;
   queueMicrotask(() => void recoverAndProcess());
 }
 
 export async function enqueueSubmission(submissionId: string) {
-  startJudgeQueueWorker();
-
   await prisma.$transaction(async (tx) => {
     await tx.submission.update({
       where: { id: submissionId },
@@ -51,8 +57,9 @@ export async function enqueueSubmission(submissionId: string) {
     });
   });
 
-  logEvent("info", "queue.enqueued", { submissionId });
-  queueMicrotask(() => void processNext());
+  await enqueueRedisReady(submissionId);
+  logEvent("info", "queue.enqueued", { submissionId, mode: redisMode() });
+  if (shouldAutoStartWorker()) queueMicrotask(() => void processNext());
 }
 
 export async function getQueueDepth() {
@@ -62,6 +69,59 @@ export async function getQueueDepth() {
     prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.RETRYING } }),
   ]);
   return pending + running + retrying;
+}
+
+export async function getQueueMetrics() {
+  const now = new Date();
+  const [depth, retryCount, failureCount, oldestPending] = await Promise.all([
+    getQueueDepth(),
+    prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.RETRYING } }),
+    prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.FAILED } }),
+    prisma.judgeQueueItem.findFirst({
+      where: { status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] }, nextAttemptAt: { lte: now } },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  const queueLagMs = oldestPending ? Math.max(0, now.getTime() - oldestPending.createdAt.getTime()) : 0;
+  const avgWaitSec = Math.max(2, Number(process.env.QUEUE_AVG_JOB_SECONDS ?? "6"));
+
+  return {
+    depth,
+    retryCount,
+    failureCount,
+    queueLagMs,
+    etaSeconds: depth * avgWaitSec,
+    mode: redisMode(),
+    workerMode: process.env.QUEUE_WORKER_MODE ?? "embedded",
+  };
+}
+
+export async function getSubmissionQueueState(submissionId: string) {
+  const item = await prisma.judgeQueueItem.findUnique({
+    where: { submissionId },
+    select: { status: true, createdAt: true },
+  });
+  if (!item) return null;
+
+  const ahead = await prisma.judgeQueueItem.count({
+    where: {
+      status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] },
+      createdAt: { lt: item.createdAt },
+    },
+  });
+
+  const avgWaitSec = Math.max(2, Number(process.env.QUEUE_AVG_JOB_SECONDS ?? "6"));
+  return {
+    status: item.status,
+    ahead,
+    estimatedWaitSec: Math.max(0, ahead * avgWaitSec),
+  };
+}
+
+export async function runWorkerLoop() {
+  await recoverAndProcess();
 }
 
 async function recoverAndProcess() {
@@ -87,6 +147,7 @@ async function recoverAndProcess() {
     }
   });
 
+  await hydrateRedisQueueFromDb();
   await processNext();
 }
 
@@ -96,43 +157,22 @@ async function processNext() {
 
   try {
     while (true) {
-      const leaseId = crypto.randomUUID();
-      const next = await prisma.judgeQueueItem.findFirst({
-        where: {
-          status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] },
-          nextAttemptAt: { lte: new Date() },
-        },
-        orderBy: { createdAt: "asc" },
-        select: { id: true, submissionId: true, attemptCount: true, maxRetries: true },
-      });
-
-      if (!next) break;
-
-      const leased = await prisma.judgeQueueItem.updateMany({
-        where: {
-          id: next.id,
-          status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] },
-        },
-        data: {
-          status: QueueItemStatus.RUNNING,
-          leaseId,
-          leaseExpiresAt: new Date(Date.now() + 30_000),
-          attemptCount: { increment: 1 },
-          startedAt: new Date(),
-        },
-      });
-
-      if (!leased.count) continue;
+      const leased = await leaseNextItem();
+      if (!leased) break;
 
       const queueItem = await prisma.judgeQueueItem.findUnique({
-        where: { id: next.id },
+        where: { id: leased.id },
         select: { attemptCount: true, maxRetries: true, submissionId: true },
       });
-      if (!queueItem) continue;
+      if (!queueItem) {
+        await releaseLease(leased);
+        continue;
+      }
 
       logEvent("info", "queue.started", {
         submissionId: queueItem.submissionId,
         attemptCount: queueItem.attemptCount,
+        requestId: leased.leaseId,
       });
 
       await prisma.submission.update({
@@ -146,10 +186,10 @@ async function processNext() {
       try {
         await processSubmission(queueItem.submissionId);
         await prisma.judgeQueueItem.update({
-          where: { id: next.id },
+          where: { id: leased.id },
           data: { status: QueueItemStatus.COMPLETED, completedAt: new Date(), leaseId: null, leaseExpiresAt: null },
         });
-
+        await releaseLease(leased);
         logEvent("info", "queue.completed", { submissionId: queueItem.submissionId });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 채점 실패";
@@ -158,7 +198,7 @@ async function processNext() {
         if (shouldRetry) {
           await prisma.$transaction(async (tx) => {
             await tx.judgeQueueItem.update({
-              where: { id: next.id },
+              where: { id: leased.id },
               data: {
                 status: QueueItemStatus.RETRYING,
                 nextAttemptAt: new Date(Date.now() + backoffMs(queueItem.attemptCount)),
@@ -177,6 +217,8 @@ async function processNext() {
             });
           });
 
+          await enqueueRedisReady(queueItem.submissionId, Date.now() + backoffMs(queueItem.attemptCount));
+          await releaseLease(leased);
           logEvent("warn", "queue.retrying", {
             submissionId: queueItem.submissionId,
             attemptCount: queueItem.attemptCount,
@@ -185,7 +227,7 @@ async function processNext() {
         } else {
           await prisma.$transaction(async (tx) => {
             await tx.judgeQueueItem.update({
-              where: { id: next.id },
+              where: { id: leased.id },
               data: {
                 status: QueueItemStatus.FAILED,
                 lastError: message,
@@ -205,6 +247,7 @@ async function processNext() {
             });
           });
 
+          await releaseLease(leased);
           logEvent("error", "queue.failed", {
             submissionId: queueItem.submissionId,
             attemptCount: queueItem.attemptCount,
@@ -216,6 +259,98 @@ async function processNext() {
   } finally {
     processing = false;
   }
+}
+
+async function leaseNextItem() {
+  const leaseId = crypto.randomUUID();
+  const redis = getRedisClient();
+
+  if (redis) {
+    const now = Date.now();
+    const submissionId = await redis.zrangebyscore(REDIS_QUEUE_KEY, 0, now, "LIMIT", 0, 1).then(async (rows) => {
+      if (!rows.length) return null;
+      const candidate = rows[0];
+      const removed = await redis.zrem(REDIS_QUEUE_KEY, candidate);
+      if (!removed) return null;
+      await redis.set(`${REDIS_LEASE_PREFIX}${candidate}`, leaseId, "PX", 30_000);
+      return candidate;
+    });
+
+    if (submissionId) {
+      const dbItem = await prisma.judgeQueueItem.findUnique({
+        where: { submissionId },
+        select: { id: true },
+      });
+      if (dbItem) {
+        const ok = await prisma.judgeQueueItem.updateMany({
+          where: { id: dbItem.id, status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] } },
+          data: {
+            status: QueueItemStatus.RUNNING,
+            leaseId,
+            leaseExpiresAt: new Date(Date.now() + 30_000),
+            attemptCount: { increment: 1 },
+            startedAt: new Date(),
+          },
+        });
+        if (ok.count) return { id: dbItem.id, submissionId, leaseId };
+      }
+      await releaseLease({ submissionId, leaseId, id: "" });
+    }
+  }
+
+  const next = await prisma.judgeQueueItem.findFirst({
+    where: {
+      status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] },
+      nextAttemptAt: { lte: new Date() },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, submissionId: true },
+  });
+  if (!next) return null;
+
+  const leased = await prisma.judgeQueueItem.updateMany({
+    where: { id: next.id, status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] } },
+    data: {
+      status: QueueItemStatus.RUNNING,
+      leaseId,
+      leaseExpiresAt: new Date(Date.now() + 30_000),
+      attemptCount: { increment: 1 },
+      startedAt: new Date(),
+    },
+  });
+
+  if (!leased.count) return null;
+  return { id: next.id, submissionId: next.submissionId, leaseId };
+}
+
+async function enqueueRedisReady(submissionId: string, dueAtMs = Date.now()) {
+  const redis = getRedisClient();
+  if (!redis) return;
+  await redis.zadd(REDIS_QUEUE_KEY, `${dueAtMs}`, submissionId);
+}
+
+async function releaseLease(leased: { submissionId: string; leaseId: string; id: string }) {
+  const redis = getRedisClient();
+  if (!redis) return;
+  await redis.del(`${REDIS_LEASE_PREFIX}${leased.submissionId}`);
+}
+
+async function hydrateRedisQueueFromDb() {
+  const redis = getRedisClient();
+  if (!redis) return;
+
+  const pending = await prisma.judgeQueueItem.findMany({
+    where: { status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] } },
+    select: { submissionId: true, nextAttemptAt: true },
+    take: 500,
+  });
+  if (!pending.length) return;
+
+  const zargs: string[] = [];
+  for (const row of pending) {
+    zargs.push(`${row.nextAttemptAt.getTime()}`, row.submissionId);
+  }
+  await redis.zadd(REDIS_QUEUE_KEY, ...zargs);
 }
 
 async function processSubmission(submissionId: string) {

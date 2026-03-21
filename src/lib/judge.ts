@@ -58,9 +58,16 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
     };
   }
 
-  const submitData = (await submitResponse.json()) as { submissionId: string };
+  const submitData = (await submitResponse.json()) as {
+    submissionId: string;
+    queue?: { depth: number; ahead: number; estimatedWaitSec: number };
+  };
 
-  for (let i = 0; i < 8; i += 1) {
+  const queueIntro = submitData.queue
+    ? `대기열 상태: 앞에 ${submitData.queue.ahead}건, 전체 ${submitData.queue.depth}건\n예상 대기: 약 ${submitData.queue.estimatedWaitSec}초`
+    : "";
+
+  for (let i = 0; i < 12; i += 1) {
     await sleep(900);
     const poll = await fetch(`/api/submissions/${submitData.submissionId}`, { cache: "no-store" });
     if (!poll.ok) break;
@@ -71,6 +78,7 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
       output: string;
       testcaseSummary?: SafeCaseSummary[];
       stats?: SafeStats;
+      queue?: { ahead: number; estimatedWaitSec: number } | null;
       feedback?: {
         type?: string;
         rootCause?: string;
@@ -93,7 +101,15 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
       return {
         action: "submit",
         success: polled.status === "ACCEPTED",
-        output: [polled.output, statsText, visibleFailed.length ? `실패 힌트: ${visibleFailed.join(", ")}` : "", feedbackText].filter(Boolean).join("\n"),
+        output: [
+          queueIntro,
+          polled.output,
+          statsText,
+          visibleFailed.length ? `실패 힌트: ${visibleFailed.join(", ")}` : "",
+          feedbackText,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       };
     }
   }
@@ -101,7 +117,7 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
   return {
     action: "submit",
     success: true,
-    output: "제출이 접수되었습니다. 채점이 지연되고 있어 잠시 후 제출 기록에서 확인해 주세요.",
+    output: [queueIntro, "제출이 접수되었습니다. 채점이 지연되고 있어 잠시 후 제출 기록에서 확인해 주세요."].filter(Boolean).join("\n"),
   };
 }
 

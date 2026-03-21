@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { RUNNER_LIMITS } from "@/lib/runner-config";
 import { getQueueDepth, startJudgeQueueWorker } from "@/lib/queue";
+import { redisMode } from "@/lib/redis";
 
 export async function GET() {
   startJudgeQueueWorker();
@@ -32,6 +33,8 @@ export async function GET() {
       status: ready ? "ok" : "degraded",
       timestamp: new Date().toISOString(),
       queueDepth,
+      queueMode: redisMode(),
+      workerMode: process.env.QUEUE_WORKER_MODE ?? "embedded",
       checks,
     },
     { status: ready ? 200 : 503 },

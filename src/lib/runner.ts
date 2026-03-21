@@ -8,6 +8,10 @@ import { validateProblemCatalogIntegrity } from "./problem-catalog-validator";
 import { RUNNER_COMPILER, RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS, RUNNER_RUNTIME } from "./runner-config";
 import { logEvent } from "./logger";
 
+const MAX_CONCURRENCY = Math.max(1, Number(process.env.RUNNER_MAX_CONCURRENCY ?? "2"));
+let activeRuns = 0;
+const waitingResolvers: Array<() => void> = [];
+
 export type ExecutionResult = {
   success: boolean;
   stdout: string;
@@ -47,152 +51,156 @@ export function checkForbiddenSource(source: string): string | null {
 }
 
 export async function compileAndRun(source: string, stdin: string): Promise<ExecutionResult> {
-  const forbidden = checkForbiddenSource(source);
-  if (forbidden) {
-    return failureFromForbidden(forbidden);
-  }
-
-  const workspace = await createWorkspace("algosprint");
-  const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
-  const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
-
-  try {
-    await fs.writeFile(sourcePath, source, "utf8");
-    const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
-      timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
-      stage: "compile",
-    });
-
-    if (!compile.ok) {
-      return {
-        success: false,
-        stdout: compile.stdout,
-        stderr: compile.stderr,
-        compileError: compile.stderr || "Compilation failed",
-        exitCode: compile.exitCode,
-        elapsedMs: compile.elapsedMs,
-        timedOut: compile.timedOut,
-      };
+  return withRunPermit(async () => {
+    const forbidden = checkForbiddenSource(source);
+    if (forbidden) {
+      return failureFromForbidden(forbidden);
     }
 
-    const run = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin, stage: "run" });
-    return {
-      success: !run.timedOut && run.exitCode === 0,
-      stdout: run.stdout,
-      stderr: run.stderr,
-      exitCode: run.exitCode,
-      elapsedMs: run.elapsedMs,
-      timedOut: run.timedOut,
-    };
-  } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
-  }
+    const workspace = await createWorkspace("algosprint");
+    const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
+    const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
+
+    try {
+      await fs.writeFile(sourcePath, source, "utf8");
+      const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
+        timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
+        stage: "compile",
+      });
+
+      if (!compile.ok) {
+        return {
+          success: false,
+          stdout: compile.stdout,
+          stderr: compile.stderr,
+          compileError: compile.stderr || "Compilation failed",
+          exitCode: compile.exitCode,
+          elapsedMs: compile.elapsedMs,
+          timedOut: compile.timedOut,
+        };
+      }
+
+      const run = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin, stage: "run" });
+      return {
+        success: !run.timedOut && run.exitCode === 0,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        exitCode: run.exitCode,
+        elapsedMs: run.elapsedMs,
+        timedOut: run.timedOut,
+      };
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
 }
 
 export async function judgeSubmission(problemId: string, source: string) {
-  validateProblemCatalogIntegrity();
+  return withRunPermit(async () => {
+    validateProblemCatalogIntegrity();
 
-  const problem = problemCatalog.find((item) => item.id === problemId);
-  const sampleTests = problem?.sampleTests ?? [];
-  const hiddenTests = hiddenTestCatalog[problemId] ?? [];
-  const tests = [
-    ...sampleTests.map((tc) => ({ ...tc, scope: "sample" as const })),
-    ...hiddenTests.map((tc) => ({ ...tc, scope: "hidden" as const })),
-  ];
+    const problem = problemCatalog.find((item) => item.id === problemId);
+    const sampleTests = problem?.sampleTests ?? [];
+    const hiddenTests = hiddenTestCatalog[problemId] ?? [];
+    const tests = [
+      ...sampleTests.map((tc) => ({ ...tc, scope: "sample" as const })),
+      ...hiddenTests.map((tc) => ({ ...tc, scope: "hidden" as const })),
+    ];
 
-  if (!tests.length) {
-    return {
-      status: "WRONG_ANSWER" as const,
-      output: "평가용 테스트케이스가 설정되지 않았습니다.",
-      elapsedMs: 0,
-      exitCode: null,
-      summary: [] as SubmissionCaseResult[],
-      stats: { totalTests: 0, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
-    };
-  }
+    if (!tests.length) {
+      return {
+        status: "WRONG_ANSWER" as const,
+        output: "평가용 테스트케이스가 설정되지 않았습니다.",
+        elapsedMs: 0,
+        exitCode: null,
+        summary: [] as SubmissionCaseResult[],
+        stats: { totalTests: 0, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
+      };
+    }
 
-  const forbidden = checkForbiddenSource(source);
-  if (forbidden) {
-    return {
-      status: "COMPILATION_ERROR" as const,
-      output: `컴파일 오류\n${forbidden}`,
-      elapsedMs: 0,
-      exitCode: null,
-      summary: [] as SubmissionCaseResult[],
-      stats: { totalTests: tests.length, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
-    };
-  }
-
-  const workspace = await createWorkspace("algosprint-sub");
-  const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
-  const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
-
-  try {
-    await fs.writeFile(sourcePath, source, "utf8");
-    const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
-      timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
-      stage: "compile",
-    });
-
-    if (!compile.ok) {
+    const forbidden = checkForbiddenSource(source);
+    if (forbidden) {
       return {
         status: "COMPILATION_ERROR" as const,
-        output: `컴파일 오류\n${compile.stderr || "Compilation failed"}`,
-        elapsedMs: compile.elapsedMs,
-        exitCode: compile.exitCode,
+        output: `컴파일 오류\n${forbidden}`,
+        elapsedMs: 0,
+        exitCode: null,
         summary: [] as SubmissionCaseResult[],
         stats: { totalTests: tests.length, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
       };
     }
 
-    const summary: SubmissionCaseResult[] = [];
-    let totalElapsed = compile.elapsedMs;
-    let latestExitCode: number | null = 0;
+    const workspace = await createWorkspace("algosprint-sub");
+    const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
+    const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
 
-    for (let i = 0; i < tests.length; i += 1) {
-      const tc = tests[i];
-      const result = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin: tc.input, stage: "judge" });
-      totalElapsed += result.elapsedMs;
-      latestExitCode = result.exitCode;
-
-      const verdict = computeCaseVerdict(result, tc);
-      const passed = verdict === "PASS";
-
-      summary.push({
-        index: i + 1,
-        scope: tc.scope,
-        passed,
-        verdict,
-        elapsedMs: result.elapsedMs,
-        exitCode: result.exitCode,
-        timedOut: Boolean(result.timedOut),
+    try {
+      await fs.writeFile(sourcePath, source, "utf8");
+      const compile = await runProcess(RUNNER_COMPILER.command, [...RUNNER_COMPILER.args, sourcePath, "-o", binaryPath], {
+        timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
+        stage: "compile",
       });
 
-      if (!passed) {
-        const stats = buildSummaryStats(summary, tests.length);
+      if (!compile.ok) {
         return {
-          status: mapStatusFromVerdict(verdict),
-          output: formatFailureMessage(i + 1, tc.scope, verdict, stats),
-          elapsedMs: totalElapsed,
-          exitCode: latestExitCode,
-          summary,
-          stats,
+          status: "COMPILATION_ERROR" as const,
+          output: `컴파일 오류\n${compile.stderr || "Compilation failed"}`,
+          elapsedMs: compile.elapsedMs,
+          exitCode: compile.exitCode,
+          summary: [] as SubmissionCaseResult[],
+          stats: { totalTests: tests.length, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
         };
       }
-    }
 
-    const stats = buildSummaryStats(summary, tests.length);
-    return {
-      status: "ACCEPTED" as const,
-      output: `정답입니다. 총 ${stats.totalTests}개 테스트를 모두 통과했습니다.`,
-      elapsedMs: totalElapsed,
-      exitCode: latestExitCode,
-      summary,
-      stats,
-    };
-  } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
-  }
+      const summary: SubmissionCaseResult[] = [];
+      let totalElapsed = compile.elapsedMs;
+      let latestExitCode: number | null = 0;
+
+      for (let i = 0; i < tests.length; i += 1) {
+        const tc = tests[i];
+        const result = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin: tc.input, stage: "judge" });
+        totalElapsed += result.elapsedMs;
+        latestExitCode = result.exitCode;
+
+        const verdict = computeCaseVerdict(result, tc);
+        const passed = verdict === "PASS";
+
+        summary.push({
+          index: i + 1,
+          scope: tc.scope,
+          passed,
+          verdict,
+          elapsedMs: result.elapsedMs,
+          exitCode: result.exitCode,
+          timedOut: Boolean(result.timedOut),
+        });
+
+        if (!passed) {
+          const stats = buildSummaryStats(summary, tests.length);
+          return {
+            status: mapStatusFromVerdict(verdict),
+            output: formatFailureMessage(i + 1, tc.scope, verdict, stats),
+            elapsedMs: totalElapsed,
+            exitCode: latestExitCode,
+            summary,
+            stats,
+          };
+        }
+      }
+
+      const stats = buildSummaryStats(summary, tests.length);
+      return {
+        status: "ACCEPTED" as const,
+        output: `정답입니다. 총 ${stats.totalTests}개 테스트를 모두 통과했습니다.`,
+        elapsedMs: totalElapsed,
+        exitCode: latestExitCode,
+        summary,
+        stats,
+      };
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
 }
 
 function computeCaseVerdict(result: { stdout: string; exitCode: number | null; timedOut: boolean }, tc: InternalTestcase): CaseVerdict {
@@ -264,6 +272,21 @@ function safeTruncate(text: string, maxBytes: number) {
   const buffer = Buffer.from(text, "utf8");
   if (buffer.byteLength <= maxBytes) return text;
   return `${buffer.subarray(0, maxBytes).toString("utf8")}\n[truncated]`;
+}
+
+async function withRunPermit<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeRuns >= MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => waitingResolvers.push(resolve));
+  }
+  activeRuns += 1;
+
+  try {
+    return await fn();
+  } finally {
+    activeRuns = Math.max(0, activeRuns - 1);
+    const next = waitingResolvers.shift();
+    if (next) next();
+  }
 }
 
 function failureFromForbidden(message: string): ExecutionResult {

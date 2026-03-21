@@ -2,20 +2,20 @@
 
 Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 7 scope (operational hardening + near-production readiness)
+## Milestone 8 scope (distributed-ready infra with minimal complexity)
 
 Implemented end-to-end:
-- Durable judge queue backed by DB (`JudgeQueueItem`) with startup recovery worker
-- Retry policy with terminal `FAILED` status
-- Lightweight rate limiting for `execute`/`submit` (per-IP + per-user)
-- Korean-first error responses + `Retry-After` support
-- Centralized runner safety policy (`src/lib/runner-safety-policy.ts`)
-- Request payload runtime validation for core APIs
-- Structured JSON logs for queue/judge lifecycle
-- Metrics endpoint (`GET /api/metrics`)
-- Extended health endpoint with queue checks (`GET /api/health`)
-- UX stabilization for duplicate submit spam (pending lock)
-- Ops docs: `docs/OPERATIONS.md`, `docs/PREDEPLOY_CHECKLIST.md`
+- Optional Redis integration layer (`REDIS_URL`) for distributed-friendly queue lease + rate limiting backend
+- Queue fallback remains DB-backed when Redis is absent
+- Worker mode split: embedded(default) / external (`QUEUE_WORKER_MODE=external`) + secured `POST /api/worker`
+- External worker loop script: `npm run worker:loop`
+- Rate limit backend metadata headers (`X-RateLimit-Backend`) + Korean 429 errors with `Retry-After`
+- `/api/metrics` 확장: queue lag, retry count, failure count, ETA, queue/worker mode
+- `/api/execute`, `/api/submissions`에 correlation request ID (`X-Request-Id`) 로그 추적 추가
+- Runner 서버 동시성 가드 (`RUNNER_MAX_CONCURRENCY`)
+- 제출 UX: 접수 시 대기열 위치/예상 대기시간 노출
+- Non-sandbox 경고 배너 + 강화된 실행 정책 문서화
+- 기존 Milestone 7 기능 전체 유지
 
 Also retained Milestone 6 capabilities:
 
@@ -72,7 +72,8 @@ Also retained Milestone 6 capabilities:
 - `POST /api/admin/queue-test` — enqueue admin test submission (admin/dev only)
 - `GET /api/review-queue` — prioritized retry list from weak topics + failed submissions (auth required)
 - `GET /api/health` — deploy-time sanity/readiness check (DB + queue + env + runner)
-- `GET /api/metrics` — submission/queue status counters + queue depth
+- `GET /api/metrics` — submission/queue 상태 + queue lag/retry/failure/ETA/worker mode
+- `POST /api/worker` — external worker tick endpoint (optional token auth)
 
 ## Environment setup
 
@@ -110,6 +111,19 @@ Admin emails (for `/admin/harness` in production):
 ADMIN_EMAILS="you@example.com,teammate@example.com"
 ```
 
+Optional distributed/worker settings:
+
+```env
+REDIS_URL="redis://localhost:6379"
+QUEUE_WORKER_MODE="embedded" # embedded | external
+WORKER_API_TOKEN="change-me" # required only when exposing /api/worker
+WORKER_BASE_URL="http://localhost:3000" # for worker loop script
+WORKER_LOOP_INTERVAL_MS="1500"
+RUNNER_MAX_CONCURRENCY="2"
+QUEUE_AVG_JOB_SECONDS="6"
+NEXT_PUBLIC_RUNNER_SANDBOXED="0" # 1이면 샌드박스 경고 배너 숨김
+```
+
 ## Run locally
 
 ```bash
@@ -120,6 +134,12 @@ npm run dev
 ```
 
 Open <http://localhost:3000>
+
+Optional external worker (when `QUEUE_WORKER_MODE=external`):
+
+```bash
+npm run worker:loop
+```
 
 ## Quality checks
 
@@ -145,6 +165,7 @@ This project is still a lightweight dev-focused runner. Do not expose to untrust
 Known gaps:
 
 - No container/VM sandbox isolation (no seccomp/cgroups/jail)
-- Queue is now durable in DB, but still single-worker (no distributed coordination)
-- Denylist remains heuristic and bypassable
-- No robust per-tenant quota/rate limiting yet
+- Redis queue lease는 경량 구현이며 exactly-once 보장을 제공하지 않음 (at-least-once 성격)
+- 컨테이너/VM 수준의 강제 sandbox 격리가 기본 제공되지 않음
+- Denylist 기반 필터는 우회 가능성 존재
+- 강한 멀티테넌트 격리/쿼터 체계는 추가 설계 필요

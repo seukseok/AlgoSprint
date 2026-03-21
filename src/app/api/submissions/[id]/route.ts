@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { isFinalStatus } from "@/lib/queue";
+import { getSubmissionQueueState, isFinalStatus } from "@/lib/queue";
 import { requireSessionUser } from "@/lib/session-user";
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -20,6 +20,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   });
 
   const done = isFinalStatus(submission.status);
+  const queueState = done ? null : await getSubmissionQueueState(submission.id);
 
   const testcaseSummary = submission.testcaseSummary ? JSON.parse(submission.testcaseSummary) : [];
   const passedTests = testcaseSummary.filter((item: { passed: boolean }) => item.passed).length;
@@ -46,5 +47,6 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       passedTests,
       failedIndexes,
     },
+    queue: queueState,
   });
 }
