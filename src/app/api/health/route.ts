@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { RUNNER_LIMITS } from "@/lib/runner-config";
+import { RUNNER_EXECUTION, RUNNER_LIMITS } from "@/lib/runner-config";
 import { getQueueDepth, startJudgeQueueWorker } from "@/lib/queue";
 import { redisMode } from "@/lib/redis";
 
@@ -35,6 +35,8 @@ export async function GET() {
       queueDepth,
       queueMode: redisMode(),
       workerMode: process.env.QUEUE_WORKER_MODE ?? "embedded",
+      runnerExecutionMode: RUNNER_EXECUTION.mode,
+      safeMode: process.env.NEXT_PUBLIC_RUNNER_SAFE_MODE === "1",
       checks,
     },
     { status: ready ? 200 : 503 },

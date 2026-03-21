@@ -1,16 +1,19 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { problemCatalog } from "./problem-catalog";
 import { hiddenTestCatalog, InternalTestcase } from "./problem-hidden-tests";
 import { validateProblemCatalogIntegrity } from "./problem-catalog-validator";
-import { RUNNER_COMPILER, RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS, RUNNER_RUNTIME } from "./runner-config";
+import { RUNNER_COMPILER, RUNNER_DENYLIST_PATTERNS, RUNNER_EXECUTION, RUNNER_LIMITS, RUNNER_RUNTIME } from "./runner-config";
 import { logEvent } from "./logger";
+import { ERROR_CODES } from "./error-codes";
 
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.RUNNER_MAX_CONCURRENCY ?? "2"));
 let activeRuns = 0;
 const waitingResolvers: Array<() => void> = [];
+
+const HAS_PRLIMIT = spawnSync("bash", ["-lc", "command -v prlimit >/dev/null 2>&1"], { stdio: "ignore" }).status === 0;
 
 export type ExecutionResult = {
   success: boolean;
@@ -90,7 +93,7 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
         timedOut: run.timedOut,
       };
     } finally {
-      await fs.rm(workspace, { recursive: true, force: true });
+      await cleanupWorkspace(workspace);
     }
   });
 }
@@ -198,7 +201,7 @@ export async function judgeSubmission(problemId: string, source: string) {
         stats,
       };
     } finally {
-      await fs.rm(workspace, { recursive: true, force: true });
+      await cleanupWorkspace(workspace);
     }
   });
 }
@@ -268,6 +271,17 @@ async function createWorkspace(prefix: string) {
   return resolved;
 }
 
+async function cleanupWorkspace(workspace: string) {
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      await fs.rm(workspace, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 60 * (i + 1)));
+    }
+  }
+}
+
 function safeTruncate(text: string, maxBytes: number) {
   const buffer = Buffer.from(text, "utf8");
   if (buffer.byteLength <= maxBytes) return text;
@@ -314,23 +328,39 @@ async function runProcess(
         .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
     );
 
-    const child = spawn(command, args, { stdio: "pipe", env: { ...process.env, ...env } });
+    const launched = buildLaunchCommand(command, args, options.stage);
+    const child = spawn(launched.command, launched.args, {
+      stdio: "pipe",
+      env: { ...process.env, ...env, MALLOC_ARENA_MAX: "1" },
+      detached: true,
+    });
+
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let total = 0;
     let killedForOutput = false;
     let timedOut = false;
 
+    const killTree = () => {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      }
+    };
+
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killTree();
     }, options.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
       total += chunk.length;
       if (total > RUNNER_LIMITS.outputLimitBytes) {
         killedForOutput = true;
-        child.kill("SIGKILL");
+        killTree();
         return;
       }
       stdoutChunks.push(chunk);
@@ -340,7 +370,7 @@ async function runProcess(
       total += chunk.length;
       if (total > RUNNER_LIMITS.outputLimitBytes) {
         killedForOutput = true;
-        child.kill("SIGKILL");
+        killTree();
         return;
       }
       stderrChunks.push(chunk);
@@ -351,7 +381,10 @@ async function runProcess(
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       let stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (killedForOutput) {
-        stderr += "\n[runner] output limit exceeded";
+        stderr += `\n[${ERROR_CODES.RUNNER_OUTPUT_LIMIT}] output limit exceeded`;
+      }
+      if (timedOut) {
+        stderr += `\n[${ERROR_CODES.RUNNER_EXEC_TIMEOUT}] process timeout`;
       }
       stderr = safeTruncate(stderr, RUNNER_LIMITS.stderrLogLimitBytes);
       const elapsedMs = Date.now() - start;
@@ -359,7 +392,8 @@ async function runProcess(
 
       logEvent(ok ? "info" : "warn", "runner.process.finished", {
         stage: options.stage,
-        command,
+        command: launched.command,
+        mode: RUNNER_EXECUTION.mode,
         exitCode: code,
         elapsedMs,
         timedOut,
@@ -381,4 +415,24 @@ async function runProcess(
     }
     child.stdin.end();
   });
+}
+
+function buildLaunchCommand(command: string, args: string[], stage: "compile" | "run" | "judge") {
+  if (RUNNER_EXECUTION.mode === "isolated" && RUNNER_EXECUTION.isolatedCommand) {
+    const payload = JSON.stringify({ command, args, stage });
+    return {
+      command: RUNNER_EXECUTION.isolatedCommand,
+      args: [payload],
+    };
+  }
+
+  const applyResourceLimit = stage !== "compile" && HAS_PRLIMIT;
+  if (applyResourceLimit) {
+    return {
+      command: "prlimit",
+      args: [`--cpu=${RUNNER_LIMITS.cpuTimeSeconds}`, `--as=${RUNNER_LIMITS.memoryLimitKb * 1024}`, "--", command, ...args],
+    };
+  }
+
+  return { command, args };
 }

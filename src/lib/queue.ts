@@ -4,13 +4,16 @@ import { inferLearningFeedback } from "@/lib/learning-feedback";
 import { judgeSubmission } from "@/lib/runner";
 import { logEvent } from "@/lib/logger";
 import { getRedisClient, redisMode } from "@/lib/redis";
+import { ERROR_CODES } from "@/lib/error-codes";
 
 let started = false;
 let processing = false;
+let runPromise: Promise<{ processed: number }> | null = null;
 
 const MAX_RETRIES = 3;
 const REDIS_QUEUE_KEY = "judge:queue:ready";
 const REDIS_LEASE_PREFIX = "judge:lease:";
+const REDIS_WORKER_LOCK = "judge:worker:lock";
 
 const FINAL_STATUSES = new Set<SubmissionStatus>([
   SubmissionStatus.ACCEPTED,
@@ -53,6 +56,8 @@ export async function enqueueSubmission(submissionId: string) {
       update: {
         status: QueueItemStatus.PENDING,
         nextAttemptAt: new Date(),
+        deadLetteredAt: null,
+        deadLetterReason: null,
       },
     });
   });
@@ -73,10 +78,11 @@ export async function getQueueDepth() {
 
 export async function getQueueMetrics() {
   const now = new Date();
-  const [depth, retryCount, failureCount, oldestPending] = await Promise.all([
+  const [depth, retryCount, failureCount, deadLetterCount, oldestPending] = await Promise.all([
     getQueueDepth(),
     prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.RETRYING } }),
     prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.FAILED } }),
+    prisma.judgeQueueItem.count({ where: { status: QueueItemStatus.DEAD_LETTER } }),
     prisma.judgeQueueItem.findFirst({
       where: { status: { in: [QueueItemStatus.PENDING, QueueItemStatus.RETRYING] }, nextAttemptAt: { lte: now } },
       orderBy: { createdAt: "asc" },
@@ -91,11 +97,84 @@ export async function getQueueMetrics() {
     depth,
     retryCount,
     failureCount,
+    deadLetterCount,
     queueLagMs,
     etaSeconds: depth * avgWaitSec,
     mode: redisMode(),
     workerMode: process.env.QUEUE_WORKER_MODE ?? "embedded",
   };
+}
+
+export async function getQueueSloSummary() {
+  const windowHours = Math.max(1, Number(process.env.SLO_WINDOW_HOURS ?? "24"));
+  const since = new Date(Date.now() - windowHours * 3600_000);
+  const done = await prisma.submission.findMany({
+    where: {
+      verdictReadyAt: { not: null, gte: since },
+      status: { in: Array.from(FINAL_STATUSES) },
+    },
+    select: { status: true, createdAt: true, verdictReadyAt: true, elapsedMs: true },
+    take: 1500,
+    orderBy: { verdictReadyAt: "desc" },
+  });
+
+  const total = done.length;
+  const success = done.filter((item) => item.status === SubmissionStatus.ACCEPTED).length;
+  const processing = done.map((item) => item.elapsedMs ?? 0).filter((v) => v > 0);
+  const queueDelay = done
+    .map((item) => (item.verdictReadyAt ? Math.max(0, item.verdictReadyAt.getTime() - item.createdAt.getTime() - (item.elapsedMs ?? 0)) : 0))
+    .filter((v) => v >= 0);
+
+  return {
+    windowHours,
+    sampleSize: total,
+    successRate: total ? Number(((success / total) * 100).toFixed(2)) : 0,
+    processingP95Ms: percentile(processing, 95),
+    queueDelayP50Ms: percentile(queueDelay, 50),
+    queueDelayP95Ms: percentile(queueDelay, 95),
+  };
+}
+
+export async function listDeadLetters(limit = 50) {
+  return prisma.judgeQueueItem.findMany({
+    where: { status: QueueItemStatus.DEAD_LETTER },
+    take: Math.max(1, Math.min(200, limit)),
+    orderBy: { deadLetteredAt: "desc" },
+    include: {
+      submission: {
+        select: { id: true, userId: true, problemId: true, status: true, output: true, createdAt: true },
+      },
+    },
+  });
+}
+
+export async function requeueDeadLetter(submissionId: string) {
+  const item = await prisma.judgeQueueItem.findUnique({ where: { submissionId } });
+  if (!item || item.status !== QueueItemStatus.DEAD_LETTER) {
+    return { ok: false as const, code: ERROR_CODES.QUEUE_ITEM_NOT_FOUND };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.judgeQueueItem.update({
+      where: { submissionId },
+      data: {
+        status: QueueItemStatus.PENDING,
+        attemptCount: 0,
+        nextAttemptAt: new Date(),
+        lastError: null,
+        deadLetteredAt: null,
+        deadLetterReason: null,
+        completedAt: null,
+      },
+    });
+    await tx.submission.update({
+      where: { id: submissionId },
+      data: { status: SubmissionStatus.QUEUED, output: "관리자에 의해 재큐잉되었습니다." },
+    });
+  });
+
+  await enqueueRedisReady(submissionId);
+  return { ok: true as const };
 }
 
 export async function getSubmissionQueueState(submissionId: string) {
@@ -121,7 +200,11 @@ export async function getSubmissionQueueState(submissionId: string) {
 }
 
 export async function runWorkerLoop() {
-  await recoverAndProcess();
+  if (runPromise) return runPromise;
+  runPromise = recoverAndProcess().finally(() => {
+    runPromise = null;
+  });
+  return runPromise;
 }
 
 async function recoverAndProcess() {
@@ -148,12 +231,15 @@ async function recoverAndProcess() {
   });
 
   await hydrateRedisQueueFromDb();
-  await processNext();
+  const processed = await processNext();
+  return { processed };
 }
 
 async function processNext() {
-  if (processing) return;
+  if (processing) return 0;
+  if (!(await tryAcquireWorkerLock())) return 0;
   processing = true;
+  let processed = 0;
 
   try {
     while (true) {
@@ -190,19 +276,21 @@ async function processNext() {
           data: { status: QueueItemStatus.COMPLETED, completedAt: new Date(), leaseId: null, leaseExpiresAt: null },
         });
         await releaseLease(leased);
+        processed += 1;
         logEvent("info", "queue.completed", { submissionId: queueItem.submissionId });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 채점 실패";
         const shouldRetry = queueItem.attemptCount < queueItem.maxRetries;
 
         if (shouldRetry) {
+          const delayMs = backoffMs(queueItem.attemptCount);
           await prisma.$transaction(async (tx) => {
             await tx.judgeQueueItem.update({
               where: { id: leased.id },
               data: {
                 status: QueueItemStatus.RETRYING,
-                nextAttemptAt: new Date(Date.now() + backoffMs(queueItem.attemptCount)),
-                lastError: message,
+                nextAttemptAt: new Date(Date.now() + delayMs),
+                lastError: `${ERROR_CODES.QUEUE_PROCESSING_FAILED}: ${message}`,
                 leaseId: null,
                 leaseExpiresAt: null,
               },
@@ -217,7 +305,7 @@ async function processNext() {
             });
           });
 
-          await enqueueRedisReady(queueItem.submissionId, Date.now() + backoffMs(queueItem.attemptCount));
+          await enqueueRedisReady(queueItem.submissionId, Date.now() + delayMs);
           await releaseLease(leased);
           logEvent("warn", "queue.retrying", {
             submissionId: queueItem.submissionId,
@@ -229,7 +317,9 @@ async function processNext() {
             await tx.judgeQueueItem.update({
               where: { id: leased.id },
               data: {
-                status: QueueItemStatus.FAILED,
+                status: QueueItemStatus.DEAD_LETTER,
+                deadLetteredAt: new Date(),
+                deadLetterReason: `${ERROR_CODES.QUEUE_PROCESSING_FAILED}: ${message}`,
                 lastError: message,
                 completedAt: new Date(),
                 leaseId: null,
@@ -241,14 +331,14 @@ async function processNext() {
               where: { id: queueItem.submissionId },
               data: {
                 status: SubmissionStatus.FAILED,
-                output: "채점 시스템 오류로 제출 처리에 실패했습니다. 잠시 후 다시 제출해 주세요.",
+                output: "채점 시스템 오류로 제출 처리에 실패했습니다. 관리자 재처리가 필요합니다.",
                 verdictReadyAt: new Date(),
               },
             });
           });
 
           await releaseLease(leased);
-          logEvent("error", "queue.failed", {
+          logEvent("error", "queue.dead_letter", {
             submissionId: queueItem.submissionId,
             attemptCount: queueItem.attemptCount,
             error: message,
@@ -258,7 +348,10 @@ async function processNext() {
     }
   } finally {
     processing = false;
+    await releaseWorkerLock();
   }
+
+  return processed;
 }
 
 async function leaseNextItem() {
@@ -333,6 +426,20 @@ async function releaseLease(leased: { submissionId: string; leaseId: string; id:
   const redis = getRedisClient();
   if (!redis) return;
   await redis.del(`${REDIS_LEASE_PREFIX}${leased.submissionId}`);
+}
+
+async function tryAcquireWorkerLock() {
+  const redis = getRedisClient();
+  if (!redis) return true;
+  const lockValue = `${process.pid}:${Date.now()}`;
+  const ok = await redis.set(REDIS_WORKER_LOCK, lockValue, "PX", 25_000, "NX");
+  return ok === "OK";
+}
+
+async function releaseWorkerLock() {
+  const redis = getRedisClient();
+  if (!redis) return;
+  await redis.del(REDIS_WORKER_LOCK);
 }
 
 async function hydrateRedisQueueFromDb() {
@@ -478,4 +585,11 @@ function safelyParseTags(raw: string | null | undefined) {
 
 function backoffMs(attemptCount: number) {
   return Math.min(20_000, 1_500 * 2 ** Math.max(0, attemptCount - 1));
+}
+
+function percentile(values: number[], p: number) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[index] ?? 0;
 }

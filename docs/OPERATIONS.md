@@ -1,55 +1,66 @@
-# OPERATIONS RUNBOOK (Milestone 8)
+# OPERATIONS RUNBOOK (Milestone 9)
 
-## 1) 큐/워커 모드
+## 1) 안전 모드 / 러너 실행 모드
 
-- 기본값: `QUEUE_WORKER_MODE=embedded`
-  - 웹 프로세스가 제출 큐 워커를 함께 처리합니다.
-- 분리 모드: `QUEUE_WORKER_MODE=external`
-  - 웹 프로세스는 enqueue만 수행
-  - 별도 루프(`npm run worker:loop`)가 `POST /api/worker`로 큐를 처리
+- `NEXT_PUBLIC_RUNNER_SAFE_MODE=1`
+  - 상단 배너에 안전 모드 표시
+- `RUNNER_EXECUTION_MODE=local|isolated`
+  - `local`(기본): 현재 서버 프로세스에서 실행 (기존 호환)
+  - `isolated`: `RUNNER_ISOLATED_COMMAND` 훅으로 위임 실행
+- `RUNNER_ISOLATED_COMMAND` 예시
+  - 컨테이너 래퍼/격리 런타임 호출 스크립트
 
-`/api/worker` 보안:
-- `WORKER_API_TOKEN`이 설정되면 `x-worker-token`(또는 Bearer) 필수
+추가 보호:
+- CPU 제한: `RUNNER_CPU_TIME_SECONDS`
+- 메모리 제한 힌트: `RUNNER_MEMORY_LIMIT_KB` (prlimit 가능 시 적용)
+- 타임아웃 + 프로세스 트리 강제 종료 + 임시 디렉토리 재시도 정리
 
-## 2) Redis 사용/미사용 동작
+## 2) 워커 인증/재전송 방지
 
-- `REDIS_URL` 설정 시:
-  - Rate limiting backend: Redis (`X-RateLimit-Backend=redis`)
-  - Queue lease/fair dequeue: Redis sorted set + lease key
-- `REDIS_URL` 미설정 시:
-  - Rate limiting backend: 프로세스 메모리
-  - Queue: DB 상태 기반 fallback 동작
+`POST /api/worker` 보호 방식:
+- `x-worker-token` 또는 `Authorization: Bearer`
+- `x-worker-ts` (epoch ms)
+- `x-worker-signature` = HMAC-SHA256(token, `${timestamp}.${body}`)
+- 허용 시간 오차: `WORKER_AUTH_TOLERANCE_MS` (기본 5분)
+- nonce(서명) 재사용 방지: Redis NX 또는 메모리 캐시
 
-즉, Redis 없이도 기능은 유지되며 단일 인스턴스 운용에 적합합니다.
+`worker:loop` 스크립트는 위 헤더를 자동 생성합니다.
 
-## 3) 실패/재시도 정책
+## 3) 실패/재시도/DLQ
 
-- 최대 재시도: 3회 (`maxRetries`)
-- 백오프: 1.5s, 3s, 6s (상한 20s)
-- 재시도 초과 시 `Submission.status=FAILED`
+- 재시도 최대: 3회
+- 백오프: 1.5s, 3s, 6s (최대 20s)
+- 재시도 소진 시 `JudgeQueueItem.status=DEAD_LETTER`
+  - `deadLetterReason`, `deadLetteredAt` 기록
 
-## 4) 관측 포인트
+운영자 관리 API(로그인 + admin 권한):
+- `GET /api/admin/queue-maintenance?limit=50` : DLQ 조회
+- `POST /api/admin/queue-maintenance` with `{ submissionId }` : DLQ 재큐잉
 
-- 헬스체크: `GET /api/health`
-  - DB, queue, mode(embedded/external), redis/fallback 표시
-- 메트릭: `GET /api/metrics`
-  - queueDepth
-  - queueLagMs
-  - retryCount
-  - failureCount
-  - queueEtaSec
-  - queueMode, workerMode
+## 4) 복구/멱등성
 
-## 5) 실행 보안/동시성
+- 서버 시작 시 RUNNING 항목을 RETRYING으로 복구
+- 워커 실행 중복 방지:
+  - 프로세스 내 단일 in-flight guard
+  - Redis 분산 락(`judge:worker:lock`) best-effort
 
-- 비샌드박스 모드에서는 UI 경고 배너 표시 (`NEXT_PUBLIC_RUNNER_SANDBOXED=0`)
-- 서버 동시성 가드: `RUNNER_MAX_CONCURRENCY` (기본 2)
-- 여전히 인터넷 공개 전에는 컨테이너/VM 격리 권장
+## 5) 메트릭 / SLO
 
-## 6) 로그 가이드
+`GET /api/metrics`:
+- queueDepth, queueLagMs, retryCount, failureCount, deadLetterCount
+- `slo` 섹션
+  - successRate
+  - processingP95Ms
+  - queueDelayP50Ms / queueDelayP95Ms
 
-구조화 로그(JSON) 주요 이벤트:
-- `judge.submit` (requestId 포함)
-- `judge.execute` (requestId 포함)
-- `queue.enqueued`, `queue.started`, `queue.retrying`, `queue.failed`, `queue.completed`
-- `runner.process.finished`
+## 6) 오류 코드 (taxonomy)
+
+주요 코드:
+- `E_WORKER_UNAUTHORIZED`
+- `E_WORKER_TIMESTAMP_INVALID`
+- `E_WORKER_REPLAY_REJECTED`
+- `E_QUEUE_PROCESSING_FAILED`
+- `E_RUNNER_EXEC_TIMEOUT`
+- `E_RUNNER_OUTPUT_LIMIT`
+
+로그/응답에서 코드로 분류해 알림 규칙을 만들 수 있습니다.
