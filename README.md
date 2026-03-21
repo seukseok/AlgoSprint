@@ -2,7 +2,7 @@
 
 Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 4 scope (auth + queue + hardening)
+## Milestone 6 scope (learning feedback + review queue + runtime readiness)
 
 Implemented end-to-end:
 
@@ -29,6 +29,22 @@ Implemented end-to-end:
   - Protected page: `/admin/harness`
   - Trigger sample queued jobs and watch transition logs
   - API: `POST /api/admin/queue-test`
+- 학습 피드백 엔진 (제출 직후)
+  - 실패 타입 자동 분류: `WA / RE / TLE / CE`
+  - 루트 원인 카테고리 추론 + 다음 액션 추천 (`개념 카드`, `유사 문제`, `복습 큐`)
+  - 제출 기록/폴링 응답에 피드백 포함
+- 약점 추적 스키마 확장
+  - 사용자-문제 단위 약점 점수/실패 횟수 추적
+  - 사용자-토픽 단위 약점 점수/실패 횟수 추적
+- 복습 큐 UX (한국어)
+  - 페이지: `/review`
+  - 약한 토픽 + 우선 재도전 문제 목록 제공
+  - API: `GET /api/review-queue`
+- 배포 상태 점검 엔드포인트
+  - `GET /api/health` (DB 연결 / 필수 환경 / 러너 제한값 readiness)
+- 안전 가드레일 명시
+  - 런타임 제한 상수를 README에 공개
+  - 앱 전역 에러 바운더리 추가 (`src/app/error.tsx`)
 
 ## API routes
 
@@ -41,6 +57,8 @@ Implemented end-to-end:
 - `GET /api/drafts/:problemId` — get saved draft (auth required)
 - `PUT /api/drafts/:problemId` — save draft (auth required)
 - `POST /api/admin/queue-test` — enqueue admin test submission (admin/dev only)
+- `GET /api/review-queue` — prioritized retry list from weak topics + failed submissions (auth required)
+- `GET /api/health` — deploy-time sanity/readiness check
 
 ## Environment setup
 
@@ -95,6 +113,16 @@ Open <http://localhost:3000>
 npm run lint
 npm run build
 ```
+
+## Runtime guardrails (explicit constants)
+
+Defined in `src/lib/runner-config.ts`:
+
+- Max source size: `RUNNER_LIMITS.maxSourceBytes = 128 * 1024` bytes
+- Compile timeout: `RUNNER_LIMITS.compileTimeoutMs = 8000` ms
+- Run timeout (per testcase): `RUNNER_LIMITS.runTimeoutMs = 2000` ms
+- Combined stdout/stderr cap: `RUNNER_LIMITS.outputLimitBytes = 64 * 1024` bytes
+- Stderr log cap: `RUNNER_LIMITS.stderrLogLimitBytes = 8 * 1024` bytes
 
 ## Still not production safe
 

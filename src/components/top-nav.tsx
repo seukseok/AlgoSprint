@@ -5,6 +5,7 @@ const links = [
   { href: "/", label: "대시보드" },
   { href: "/problems", label: "문제" },
   { href: "/submissions", label: "제출 내역" },
+  { href: "/review", label: "복습 큐" },
   { href: "/admin/harness", label: "개발 하네스" },
 ];
 

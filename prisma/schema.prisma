@@ -24,48 +24,55 @@ enum SubmissionStatus {
 }
 
 model User {
-  id          String       @id @default(cuid())
-  email       String       @unique
-  name        String?
-  submissions Submission[]
-  runs        Run[]
-  drafts      CodeDraft[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id             String            @id @default(cuid())
+  email          String            @unique
+  name           String?
+  submissions    Submission[]
+  runs           Run[]
+  drafts         CodeDraft[]
+  topicWeakness  UserTopicWeakness[]
+  problemWeakness UserProblemWeakness[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 }
 
 model Problem {
-  id          String       @id
-  title       String
-  difficulty  Difficulty
-  tags        String
-  summary     String
-  statement   String
-  sampleInput String
-  sampleOutput String
-  starterCode String
-  submissions Submission[]
-  runs        Run[]
-  drafts      CodeDraft[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id              String              @id
+  title           String
+  difficulty      Difficulty
+  tags            String
+  summary         String
+  statement       String
+  sampleInput     String
+  sampleOutput    String
+  starterCode     String
+  submissions     Submission[]
+  runs            Run[]
+  drafts          CodeDraft[]
+  userWeakness    UserProblemWeakness[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 }
 
 model Submission {
-  id              String           @id @default(cuid())
-  status          SubmissionStatus @default(QUEUED)
-  source          String
-  language        String           @default("cpp17")
-  output          String?
-  testcaseSummary String?
-  elapsedMs       Int?
-  exitCode        Int?
-  verdictReadyAt  DateTime?
-  polledCount     Int              @default(0)
-  userId          String
-  problemId       String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                String           @id @default(cuid())
+  status            SubmissionStatus @default(QUEUED)
+  source            String
+  language          String           @default("cpp17")
+  output            String?
+  testcaseSummary   String?
+  elapsedMs         Int?
+  exitCode          Int?
+  verdictReadyAt    DateTime?
+  polledCount       Int              @default(0)
+  feedbackType      String?
+  feedbackRootCause String?
+  feedbackAction    String?
+  feedbackMessage   String?
+  userId            String
+  problemId         String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   user    User    @relation(fields: [userId], references: [id])
   problem Problem @relation(fields: [problemId], references: [id])
@@ -97,6 +104,40 @@ model CodeDraft {
   problemId String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  problem Problem @relation(fields: [problemId], references: [id])
+
+  @@unique([userId, problemId])
+}
+
+model UserTopicWeakness {
+  id           String   @id @default(cuid())
+  userId       String
+  topic        String
+  weaknessScore Int     @default(0)
+  failCount    Int      @default(0)
+  lastStatus   String?
+  lastFailedAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, topic])
+}
+
+model UserProblemWeakness {
+  id                 String   @id @default(cuid())
+  userId             String
+  problemId          String
+  weaknessScore      Int      @default(0)
+  failCount          Int      @default(0)
+  lastStatus         String?
+  lastFeedbackAction String?
+  lastFailedAt       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   user    User    @relation(fields: [userId], references: [id])
   problem Problem @relation(fields: [problemId], references: [id])

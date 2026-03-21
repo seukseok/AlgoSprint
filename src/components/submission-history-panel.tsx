@@ -18,6 +18,12 @@ type HistoryItem = {
   exitCode: number | null;
   createdAt: string;
   testcaseSummary: CaseSummary[];
+  feedback?: {
+    type?: string;
+    rootCause?: string;
+    action?: string;
+    message?: string;
+  } | null;
   stats?: {
     totalTests: number;
     passedTests: number;
@@ -71,6 +77,14 @@ export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
                       #{tc.index}({tc.scope === "sample" ? "샘플" : "숨김"}/{toShort(tc.verdict)})
                     </span>
                   ))}
+              </div>
+            ) : null}
+            {item.feedback ? (
+              <div className="mt-2 rounded bg-black/5 p-2 text-[11px] dark:bg-white/10">
+                <p className="font-medium">학습 피드백 · {item.feedback.type ?? "-"}</p>
+                <p>원인: {item.feedback.rootCause ?? "-"}</p>
+                <p>다음 액션: {item.feedback.action ?? "-"}</p>
+                {item.feedback.message ? <p className="mt-1">{item.feedback.message}</p> : null}
               </div>
             ) : null}
             {item.output ? <pre className="mt-2 whitespace-pre-wrap text-[11px]">{item.output}</pre> : null}

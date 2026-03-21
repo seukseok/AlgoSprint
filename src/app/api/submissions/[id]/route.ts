@@ -33,6 +33,14 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     elapsedMs: submission.elapsedMs,
     exitCode: submission.exitCode,
     testcaseSummary,
+    feedback: submission.feedbackType
+      ? {
+          type: submission.feedbackType,
+          rootCause: submission.feedbackRootCause,
+          action: submission.feedbackAction,
+          message: submission.feedbackMessage,
+        }
+      : null,
     stats: {
       totalTests: testcaseSummary.length,
       passedTests,

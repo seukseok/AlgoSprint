@@ -61,6 +61,10 @@ export async function GET(request: Request) {
       elapsedMs: true,
       exitCode: true,
       testcaseSummary: true,
+      feedbackType: true,
+      feedbackRootCause: true,
+      feedbackAction: true,
+      feedbackMessage: true,
       createdAt: true,
     },
   });
@@ -74,6 +78,14 @@ export async function GET(request: Request) {
       return {
         ...row,
         testcaseSummary,
+        feedback: row.feedbackType
+          ? {
+              type: row.feedbackType,
+              rootCause: row.feedbackRootCause,
+              action: row.feedbackAction,
+              message: row.feedbackMessage,
+            }
+          : null,
         stats: {
           totalTests: testcaseSummary.length,
           passedTests,

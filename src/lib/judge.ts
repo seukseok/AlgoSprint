@@ -68,6 +68,12 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
       output: string;
       testcaseSummary?: SafeCaseSummary[];
       stats?: SafeStats;
+      feedback?: {
+        type?: string;
+        rootCause?: string;
+        action?: string;
+        message?: string;
+      } | null;
     };
 
     if (polled.done) {
@@ -77,10 +83,14 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
         ? `총 ${stats.totalTests}개 중 ${stats.passedTests}개 통과\n실패한 테스트 번호: ${stats.failedIndexes.length ? stats.failedIndexes.join(", ") : "없음"}`
         : "";
 
+      const feedbackText = polled.feedback
+        ? `학습 피드백: ${polled.feedback.message ?? "-"}\n원인 분류: ${polled.feedback.rootCause ?? "-"}\n다음 액션: ${polled.feedback.action ?? "-"}`
+        : "";
+
       return {
         action: "submit",
         success: polled.status === "ACCEPTED",
-        output: [polled.output, statsText, visibleFailed.length ? `실패 힌트: ${visibleFailed.join(", ")}` : ""].filter(Boolean).join("\n"),
+        output: [polled.output, statsText, visibleFailed.length ? `실패 힌트: ${visibleFailed.join(", ")}` : "", feedbackText].filter(Boolean).join("\n"),
       };
     }
   }
