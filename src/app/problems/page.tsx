@@ -7,8 +7,8 @@ export default async function ProblemListPage() {
   return (
     <section className="space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Problems</h1>
-        <p className="mt-2 text-sm text-black/70 dark:text-white/70">Choose a problem and open the coding workspace.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">문제 목록</h1>
+        <p className="mt-2 text-sm text-black/70 dark:text-white/70">원하는 문제를 선택해 코딩 워크스페이스로 이동하세요.</p>
       </div>
 
       <div className="space-y-3">

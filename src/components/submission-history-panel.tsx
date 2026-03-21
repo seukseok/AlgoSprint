@@ -31,9 +31,9 @@ export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
 
   return (
     <section className="rounded-md border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-[#111827]">
-      <h3 className="text-sm font-semibold">Submission History {problemId ? "(this problem)" : ""}</h3>
-      {loading ? <p className="mt-2 text-sm text-black/60 dark:text-white/60">Loading...</p> : null}
-      {!loading && items.length === 0 ? <p className="mt-2 text-sm text-black/60 dark:text-white/60">No submissions yet.</p> : null}
+      <h3 className="text-sm font-semibold">제출 기록 {problemId ? "(현재 문제)" : ""}</h3>
+      {loading ? <p className="mt-2 text-sm text-black/60 dark:text-white/60">불러오는 중...</p> : null}
+      {!loading && items.length === 0 ? <p className="mt-2 text-sm text-black/60 dark:text-white/60">아직 제출 내역이 없습니다.</p> : null}
       <div className="mt-3 space-y-2">
         {items.map((item) => (
           <article key={item.id} className="rounded border border-black/10 p-3 text-xs dark:border-white/10">
@@ -42,13 +42,13 @@ export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
               <div>{item.status}</div>
             </div>
             <div className="mt-1 text-black/60 dark:text-white/60">
-              {new Date(item.createdAt).toLocaleString()} · {item.elapsedMs ?? "-"}ms · exit {item.exitCode ?? "-"}
+              {new Date(item.createdAt).toLocaleString()} · {item.elapsedMs ?? "-"}ms · 종료코드 {item.exitCode ?? "-"}
             </div>
             {item.testcaseSummary?.length ? (
               <div className="mt-1">
                 {item.testcaseSummary.map((tc) => (
                   <span key={tc.index} className="mr-2">
-                    #{tc.index}:{tc.passed ? "PASS" : "FAIL"}
+                    #{tc.index}:{tc.passed ? "통과" : "실패"}
                   </span>
                 ))}
               </div>

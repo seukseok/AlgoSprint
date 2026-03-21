@@ -2,10 +2,10 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 
 const links = [
-  { href: "/", label: "Dashboard" },
-  { href: "/problems", label: "Problems" },
-  { href: "/submissions", label: "Submissions" },
-  { href: "/admin/harness", label: "Dev Harness" },
+  { href: "/", label: "대시보드" },
+  { href: "/problems", label: "문제" },
+  { href: "/submissions", label: "제출 내역" },
+  { href: "/admin/harness", label: "개발 하네스" },
 ];
 
 export async function TopNav() {
@@ -33,11 +33,11 @@ export async function TopNav() {
           </nav>
           {isSignedIn ? (
             <Link href="/auth/signout" className="rounded border border-black/15 px-2 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10">
-              Sign out
+              로그아웃
             </Link>
           ) : (
             <Link href="/auth/signin" className="rounded border border-black/15 px-2 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10">
-              Sign in
+              로그인
             </Link>
           )}
         </div>
