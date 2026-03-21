@@ -3,11 +3,10 @@ import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 function devCredentialConfig() {
-  const isDev = process.env.NODE_ENV !== "production";
-  const email = process.env.DEV_LOGIN_EMAIL ?? (isDev ? "dev@algosprint.local" : undefined);
-  const password = process.env.DEV_LOGIN_PASSWORD ?? (isDev ? "devpass123" : undefined);
+  const email = process.env.DEV_LOGIN_EMAIL ?? "dev@algosprint.local";
+  const password = process.env.DEV_LOGIN_PASSWORD ?? "devpass123";
   const allow = Boolean(email && password);
-  return { isDev, email, password, allow };
+  return { email, password, allow };
 }
 
 const providers: NextAuthOptions["providers"] = [];
