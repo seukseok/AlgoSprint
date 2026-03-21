@@ -50,10 +50,16 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
     if (!poll.ok) break;
     const polled = (await poll.json()) as { status: string; done: boolean; output: string };
     if (polled.done) {
+      const details = Array.isArray((polled as { testcaseSummary?: unknown[] }).testcaseSummary)
+        ? ((polled as { testcaseSummary?: { index: number; passed: boolean }[] }).testcaseSummary ?? [])
+            .map((tc) => `#${tc.index}: ${tc.passed ? "PASS" : "FAIL"}`)
+            .join("\n")
+        : "";
+
       return {
         action: "submit",
         success: polled.status === "ACCEPTED",
-        output: `${polled.output}\nStatus: ${polled.status}`,
+        output: `${polled.output}\nStatus: ${polled.status}${details ? `\n${details}` : ""}`,
       };
     }
   }

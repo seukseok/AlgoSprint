@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getMockUser } from "@/lib/data";
 import { prisma } from "@/lib/prisma";
 import { JudgeAction } from "@/lib/types";
+import { compileAndRun } from "@/lib/runner";
 
 type ExecuteRequest = {
   action: Exclude<JudgeAction, "submit">;
@@ -19,38 +20,46 @@ export async function POST(request: Request) {
 
   const user = await getMockUser();
   const stdin = body.stdin ?? "";
-  const hasMain = body.source.includes("main(");
 
-  const outputByAction = {
-    compile: hasMain
-      ? "Compilation successful (server mock)."
-      : "Compilation failed (server mock): missing main()",
-    run: `Program executed (server mock).\nInput:\n${stdin || "(empty)"}\n\nOutput:\nHello from AlgoSprint runner.`,
-    debug: "Debug bridge is placeholder. Step/breakpoint protocol will be attached in Milestone 3.",
-  } as const;
+  const execution = await compileAndRun(body.source, body.action === "run" ? stdin : "");
 
-  const success = body.action === "compile" ? hasMain : true;
-  const result = {
-    action: body.action,
-    success,
-    output: outputByAction[body.action],
-    timeMs: body.action === "compile" ? undefined : 12,
-    memoryKb: body.action === "compile" ? undefined : 3072,
-  };
+  let output = "";
+  if (body.action === "compile") {
+    output = execution.compileError ? execution.compileError : "Compilation successful.";
+  } else if (body.action === "debug") {
+    output = `${execution.stdout}${execution.stderr ? `\n[stderr]\n${execution.stderr}` : ""}`.trim() || "Debug run completed.";
+  } else {
+    output = `${execution.stdout}${execution.stderr ? `\n[stderr]\n${execution.stderr}` : ""}`.trim();
+  }
+
+  if (execution.timedOut) {
+    output = `${output}\n[runner] time limit exceeded`.trim();
+  }
+
+  const success = body.action === "compile" ? !execution.compileError : execution.success;
 
   await prisma.run.create({
     data: {
       action: body.action,
       source: body.source,
       stdin,
-      output: result.output,
+      output,
+      stderr: execution.stderr || null,
       success,
-      timeMs: result.timeMs,
-      memoryKb: result.memoryKb,
+      timeMs: execution.elapsedMs,
+      memoryKb: null,
+      exitCode: execution.exitCode,
       userId: user.id,
       problemId: body.problemId,
     },
   });
 
-  return NextResponse.json(result);
+  return NextResponse.json({
+    action: body.action,
+    success,
+    output,
+    timeMs: execution.elapsedMs,
+    memoryKb: undefined,
+    exitCode: execution.exitCode,
+  });
 }

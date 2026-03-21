@@ -18,7 +18,9 @@ enum SubmissionStatus {
   RUNNING
   ACCEPTED
   WRONG_ANSWER
+  COMPILATION_ERROR
   RUNTIME_ERROR
+  TIME_LIMIT_EXCEEDED
 }
 
 model User {
@@ -50,20 +52,23 @@ model Problem {
 }
 
 model Submission {
-  id             String           @id @default(cuid())
-  status         SubmissionStatus @default(QUEUED)
-  source         String
-  language       String           @default("cpp17")
-  output         String?
-  verdictReadyAt DateTime?
-  polledCount    Int              @default(0)
-  userId         String
-  problemId      String
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  status          SubmissionStatus @default(QUEUED)
+  source          String
+  language        String           @default("cpp17")
+  output          String?
+  testcaseSummary String?
+  elapsedMs       Int?
+  exitCode        Int?
+  verdictReadyAt  DateTime?
+  polledCount     Int              @default(0)
+  userId          String
+  problemId       String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   user    User    @relation(fields: [userId], references: [id])
-  problem  Problem @relation(fields: [problemId], references: [id])
+  problem Problem @relation(fields: [problemId], references: [id])
 }
 
 model Run {
@@ -72,9 +77,11 @@ model Run {
   source    String
   stdin     String?
   output    String
+  stderr    String?
   success   Boolean
   timeMs    Int?
   memoryKb  Int?
+  exitCode  Int?
   userId    String
   problemId String
   createdAt DateTime @default(now())

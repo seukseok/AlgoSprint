@@ -2,27 +2,42 @@
 
 Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 2 scope
+## Milestone 3 scope (execution foundations)
 
-Implemented:
+Implemented end-to-end:
 
-- Persistent backend foundation inside Next app (App Router API routes)
-- Prisma + SQLite dev persistence for users/problems/runs/submissions/drafts
-- Server-side execute/submit flow (mock judge behavior, persisted run/submission history)
-- Async verdict simulation + polling endpoint
-- Dashboard stats backed by database (attempts, solved, streak placeholder)
-- Workspace UX upgrades:
-  - per-problem code draft persistence (localStorage + server sync)
-  - keyboard shortcut help modal
-  - action output panel with tabs (compile/run/debug/submit)
+- Real C++17 compile/run path on server via `g++`
+- Input-aware execution (`stdin`) with timeout caps
+- Captured stdout/stderr, exit code, elapsed time
+- Persisted run logs in SQLite (`Run`)
+- Submission judge on sample testcases per problem
+- Verdicts: `ACCEPTED`, `WRONG_ANSWER`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `TIME_LIMIT_EXCEEDED`
+- Stored testcase breakdown JSON per submission
+- Problem-specific submission history panel
+- Global submission history page (`/submissions`)
+
+## Security safeguards (lightweight)
+
+Current safeguards are intentionally lightweight (non-containerized):
+
+- compile timeout + run timeout (hard kill)
+- output size cap (stdout+stderr)
+- simple source denylist check (`system`, `popen`, `fork`, socket-related includes, `exec*`)
+
+Important limitations:
+
+- No OS/container sandbox yet
+- No syscall-level isolation/cgroups/seccomp
+- Denylist is heuristic and bypassable
+- Suitable for local/dev experiments, not untrusted internet-scale multi-tenant production
 
 ## API routes
 
 - `GET /api/problems` — list problems
-- `GET /api/problems/:id` — problem detail
-- `POST /api/execute` — compile/run/debug request (server-side mocked execution + persisted run log)
-- `POST /api/submissions` — create queued submission
-- `GET /api/submissions/:id` — poll simulated verdict state
+- `POST /api/execute` — compile/run/debug execution and persist run log
+- `POST /api/submissions` — judge against sample tests and persist verdict + summary
+- `GET /api/submissions/:id` — fetch submission verdict/detail
+- `GET /api/submissions` — list recent submissions (optional `?problemId=...`)
 - `GET /api/drafts/:problemId` — get saved draft for mock user
 - `PUT /api/drafts/:problemId` — save draft for mock user
 
@@ -30,40 +45,15 @@ Implemented:
 
 - `User`
 - `Problem`
-- `Submission`
-- `Run`
+- `Submission` (status + testcase summary + elapsed/exit metadata)
+- `Run` (stdout/stderr/exit/time metadata)
 - `CodeDraft`
 
 Schema: `prisma/schema.prisma`
 
-## Auth strategy (placeholder)
+## Auth strategy (still placeholder)
 
-Current milestone intentionally uses a single seeded mock user (`demo@algosprint.local`) via server helper.
-This keeps development moving while keeping route contracts user-aware.
-
-Planned migration path to NextAuth:
-
-1. Add NextAuth session provider and DB-backed adapter.
-2. Replace `getMockUser()` with `getServerSession()` + user upsert.
-3. Keep existing data model (`userId` relations already in place).
-4. Gradually switch APIs to require authenticated session.
-
-## Real vs placeholder
-
-### Real now
-
-- API-backed execution flow from UI
-- Persisted problem/submission/run/draft data on SQLite
-- Polling-based async verdict lifecycle (QUEUED -> RUNNING -> final verdict)
-- Dashboard stats from submissions data
-
-### Placeholder for future milestones
-
-- Real sandboxed C++ compilation/execution infra
-- Real debugger protocol bridge
-- Real testcase-by-testcase judge feedback
-- Production authentication and permissions
-- Queue/worker isolation for judge jobs
+Uses a single seeded mock user (`demo@algosprint.local`) for development speed.
 
 ## Run locally
 

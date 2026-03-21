@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { EditorWorkspace } from "@/components/editor-workspace";
+import { SubmissionHistoryPanel } from "@/components/submission-history-panel";
 import { findProblem, getProblems } from "@/lib/problems";
 
 export async function generateStaticParams() {
@@ -45,6 +46,7 @@ export default async function ProblemDetailPage({
       </article>
 
       <EditorWorkspace problemId={problem.id} starterCode={problem.starterCode} />
+      <SubmissionHistoryPanel problemId={problem.id} />
     </section>
   );
 }

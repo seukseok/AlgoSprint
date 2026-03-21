@@ -10,6 +10,7 @@ export interface Problem {
   sampleInput: string;
   sampleOutput: string;
   starterCode: string;
+  sampleTests?: { input: string; output: string }[];
 }
 
 export type JudgeAction = "compile" | "run" | "debug" | "submit";
