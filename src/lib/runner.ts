@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { problemCatalog } from "./problem-catalog";
+import { hiddenTestCatalog, InternalTestcase } from "./problem-hidden-tests";
+import { validateProblemCatalogIntegrity } from "./problem-catalog-validator";
 import { RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS } from "./runner-config";
 
 export type ExecutionResult = {
@@ -15,16 +17,23 @@ export type ExecutionResult = {
   timedOut?: boolean;
 };
 
+type CaseScope = "sample" | "hidden";
+type CaseVerdict = "PASS" | "WRONG_ANSWER" | "RUNTIME_ERROR" | "TIME_LIMIT_EXCEEDED";
+
 export type SubmissionCaseResult = {
   index: number;
+  scope: CaseScope;
   passed: boolean;
-  input: string;
-  expected: string;
-  actual: string;
+  verdict: CaseVerdict;
   elapsedMs: number;
   exitCode: number | null;
   timedOut: boolean;
-  stderr?: string;
+};
+
+export type SubmissionSummaryStats = {
+  totalTests: number;
+  passedTests: number;
+  failedIndexes: number[];
 };
 
 export function checkForbiddenSource(source: string): string | null {
@@ -79,16 +88,24 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
 }
 
 export async function judgeSubmission(problemId: string, source: string) {
+  validateProblemCatalogIntegrity();
+
   const problem = problemCatalog.find((item) => item.id === problemId);
-  const tests = problem?.sampleTests ?? [];
+  const sampleTests = problem?.sampleTests ?? [];
+  const hiddenTests = hiddenTestCatalog[problemId] ?? [];
+  const tests = [
+    ...sampleTests.map((tc) => ({ ...tc, scope: "sample" as const })),
+    ...hiddenTests.map((tc) => ({ ...tc, scope: "hidden" as const })),
+  ];
 
   if (!tests.length) {
     return {
       status: "WRONG_ANSWER" as const,
-      output: "No sample testcases configured for this problem.",
+      output: "평가용 테스트케이스가 설정되지 않았습니다.",
       elapsedMs: 0,
       exitCode: null,
       summary: [] as SubmissionCaseResult[],
+      stats: { totalTests: 0, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
     };
   }
 
@@ -96,10 +113,11 @@ export async function judgeSubmission(problemId: string, source: string) {
   if (forbidden) {
     return {
       status: "COMPILATION_ERROR" as const,
-      output: forbidden,
+      output: `컴파일 오류\n${forbidden}`,
       elapsedMs: 0,
       exitCode: null,
       summary: [] as SubmissionCaseResult[],
+      stats: { totalTests: tests.length, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
     };
   }
 
@@ -116,10 +134,11 @@ export async function judgeSubmission(problemId: string, source: string) {
     if (!compile.ok) {
       return {
         status: "COMPILATION_ERROR" as const,
-        output: `Compilation Error\n${compile.stderr || "Compilation failed"}`,
+        output: `컴파일 오류\n${compile.stderr || "Compilation failed"}`,
         elapsedMs: compile.elapsedMs,
         exitCode: compile.exitCode,
         summary: [] as SubmissionCaseResult[],
+        stats: { totalTests: tests.length, passedTests: 0, failedIndexes: [] } as SubmissionSummaryStats,
       };
     }
 
@@ -133,62 +152,89 @@ export async function judgeSubmission(problemId: string, source: string) {
       totalElapsed += result.elapsedMs;
       latestExitCode = result.exitCode;
 
-      const actual = normalize(result.stdout);
-      const expected = normalize(tc.output);
-      const passed = !result.timedOut && result.exitCode === 0 && actual === expected;
+      const verdict = computeCaseVerdict(result, tc);
+      const passed = verdict === "PASS";
 
       summary.push({
         index: i + 1,
+        scope: tc.scope,
         passed,
-        input: tc.input,
-        expected: tc.output,
-        actual: result.stdout,
+        verdict,
         elapsedMs: result.elapsedMs,
         exitCode: result.exitCode,
         timedOut: Boolean(result.timedOut),
-        stderr: result.stderr || undefined,
       });
 
-      if (result.timedOut) {
-        return {
-          status: "TIME_LIMIT_EXCEEDED" as const,
-          output: `TLE on sample #${i + 1}`,
-          elapsedMs: totalElapsed,
-          exitCode: result.exitCode,
-          summary,
-        };
-      }
-
-      if (result.exitCode !== 0) {
-        return {
-          status: "RUNTIME_ERROR" as const,
-          output: `RE on sample #${i + 1}\n${result.stderr}`,
-          elapsedMs: totalElapsed,
-          exitCode: result.exitCode,
-          summary,
-        };
-      }
-
       if (!passed) {
+        const stats = buildSummaryStats(summary, tests.length);
         return {
-          status: "WRONG_ANSWER" as const,
-          output: `WA on sample #${i + 1}`,
+          status: mapStatusFromVerdict(verdict),
+          output: formatFailureMessage(i + 1, tc.scope, verdict, stats),
           elapsedMs: totalElapsed,
           exitCode: latestExitCode,
           summary,
+          stats,
         };
       }
     }
 
+    const stats = buildSummaryStats(summary, tests.length);
     return {
       status: "ACCEPTED" as const,
-      output: `Accepted on ${tests.length} sample testcase(s).`,
+      output: `정답입니다. 총 ${stats.totalTests}개 테스트를 모두 통과했습니다.`,
       elapsedMs: totalElapsed,
       exitCode: latestExitCode,
       summary,
+      stats,
     };
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
+  }
+}
+
+function computeCaseVerdict(result: { stdout: string; exitCode: number | null; timedOut: boolean }, tc: InternalTestcase): CaseVerdict {
+  if (result.timedOut) return "TIME_LIMIT_EXCEEDED";
+  if (result.exitCode !== 0) return "RUNTIME_ERROR";
+  const actual = normalize(result.stdout);
+  const expected = normalize(tc.output);
+  return actual === expected ? "PASS" : "WRONG_ANSWER";
+}
+
+function buildSummaryStats(summary: SubmissionCaseResult[], totalTests: number): SubmissionSummaryStats {
+  const passedTests = summary.filter((item) => item.passed).length;
+  const failedIndexes = summary.filter((item) => !item.passed).map((item) => item.index);
+  return {
+    totalTests,
+    passedTests,
+    failedIndexes,
+  };
+}
+
+function formatFailureMessage(index: number, scope: CaseScope, verdict: CaseVerdict, stats: SubmissionSummaryStats) {
+  const scopeLabel = scope === "sample" ? "샘플" : "숨김";
+  const verdictLabel =
+    verdict === "WRONG_ANSWER"
+      ? "오답"
+      : verdict === "RUNTIME_ERROR"
+        ? "런타임 오류"
+        : verdict === "TIME_LIMIT_EXCEEDED"
+          ? "시간 초과"
+          : "실패";
+
+  const failed = stats.failedIndexes.length ? stats.failedIndexes.join(", ") : "-";
+  return `${verdictLabel} (${scopeLabel} 테스트 #${index})\n통과: ${stats.passedTests}/${stats.totalTests}\n실패한 테스트 번호: ${failed}`;
+}
+
+function mapStatusFromVerdict(verdict: CaseVerdict) {
+  switch (verdict) {
+    case "TIME_LIMIT_EXCEEDED":
+      return "TIME_LIMIT_EXCEEDED" as const;
+    case "RUNTIME_ERROR":
+      return "RUNTIME_ERROR" as const;
+    case "WRONG_ANSWER":
+      return "WRONG_ANSWER" as const;
+    default:
+      return "WRONG_ANSWER" as const;
   }
 }
 

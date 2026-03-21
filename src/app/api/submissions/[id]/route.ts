@@ -21,6 +21,10 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 
   const done = isFinalStatus(submission.status);
 
+  const testcaseSummary = submission.testcaseSummary ? JSON.parse(submission.testcaseSummary) : [];
+  const passedTests = testcaseSummary.filter((item: { passed: boolean }) => item.passed).length;
+  const failedIndexes = testcaseSummary.filter((item: { passed: boolean }) => !item.passed).map((item: { index: number }) => item.index);
+
   return NextResponse.json({
     id: submission.id,
     status: submission.status,
@@ -28,6 +32,11 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     output: submission.output,
     elapsedMs: submission.elapsedMs,
     exitCode: submission.exitCode,
-    testcaseSummary: submission.testcaseSummary ? JSON.parse(submission.testcaseSummary) : [],
+    testcaseSummary,
+    stats: {
+      totalTests: testcaseSummary.length,
+      passedTests,
+      failedIndexes,
+    },
   });
 }

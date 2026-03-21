@@ -66,9 +66,20 @@ export async function GET(request: Request) {
   });
 
   return NextResponse.json({
-    items: rows.map((row) => ({
-      ...row,
-      testcaseSummary: row.testcaseSummary ? JSON.parse(row.testcaseSummary) : [],
-    })),
+    items: rows.map((row) => {
+      const testcaseSummary = row.testcaseSummary ? JSON.parse(row.testcaseSummary) : [];
+      const passedTests = testcaseSummary.filter((item: { passed: boolean }) => item.passed).length;
+      const failedIndexes = testcaseSummary.filter((item: { passed: boolean }) => !item.passed).map((item: { index: number }) => item.index);
+
+      return {
+        ...row,
+        testcaseSummary,
+        stats: {
+          totalTests: testcaseSummary.length,
+          passedTests,
+          failedIndexes,
+        },
+      };
+    }),
   });
 }

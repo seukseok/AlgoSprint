@@ -1,5 +1,18 @@
 import { JudgeAction, JudgeResult } from "./types";
 
+type SafeCaseSummary = {
+  index: number;
+  scope: "sample" | "hidden";
+  passed: boolean;
+  verdict: "PASS" | "WRONG_ANSWER" | "RUNTIME_ERROR" | "TIME_LIMIT_EXCEEDED";
+};
+
+type SafeStats = {
+  totalTests: number;
+  passedTests: number;
+  failedIndexes: number[];
+};
+
 async function executeServerAction(params: {
   action: Exclude<JudgeAction, "submit">;
   source: string;
@@ -16,7 +29,7 @@ async function executeServerAction(params: {
     return {
       action: params.action,
       success: false,
-      output: response.status === 401 ? "Please sign in first." : "Server execute request failed.",
+      output: response.status === 401 ? "로그인 후 이용해 주세요." : "서버 실행 요청에 실패했습니다.",
     };
   }
 
@@ -38,7 +51,7 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
     return {
       action: "submit",
       success: false,
-      output: submitResponse.status === 401 ? "Please sign in first." : "Submit request failed.",
+      output: submitResponse.status === 401 ? "로그인 후 이용해 주세요." : "제출 요청에 실패했습니다.",
     };
   }
 
@@ -48,18 +61,26 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
     await sleep(900);
     const poll = await fetch(`/api/submissions/${submitData.submissionId}`, { cache: "no-store" });
     if (!poll.ok) break;
-    const polled = (await poll.json()) as { status: string; done: boolean; output: string };
+
+    const polled = (await poll.json()) as {
+      status: string;
+      done: boolean;
+      output: string;
+      testcaseSummary?: SafeCaseSummary[];
+      stats?: SafeStats;
+    };
+
     if (polled.done) {
-      const details = Array.isArray((polled as { testcaseSummary?: unknown[] }).testcaseSummary)
-        ? ((polled as { testcaseSummary?: { index: number; passed: boolean }[] }).testcaseSummary ?? [])
-            .map((tc) => `#${tc.index}: ${tc.passed ? "PASS" : "FAIL"}`)
-            .join("\n")
+      const stats = polled.stats;
+      const visibleFailed = (polled.testcaseSummary ?? []).filter((tc) => !tc.passed).map((tc) => `#${tc.index}(${tc.scope === "sample" ? "샘플" : "숨김"}, ${toVerdictLabel(tc.verdict)})`);
+      const statsText = stats
+        ? `총 ${stats.totalTests}개 중 ${stats.passedTests}개 통과\n실패한 테스트 번호: ${stats.failedIndexes.length ? stats.failedIndexes.join(", ") : "없음"}`
         : "";
 
       return {
         action: "submit",
         success: polled.status === "ACCEPTED",
-        output: `${polled.output}\nStatus: ${polled.status}${details ? `\n${details}` : ""}`,
+        output: [polled.output, statsText, visibleFailed.length ? `실패 힌트: ${visibleFailed.join(", ")}` : ""].filter(Boolean).join("\n"),
       };
     }
   }
@@ -67,7 +88,7 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
   return {
     action: "submit",
     success: true,
-    output: "Submission queued. Verdict still pending.",
+    output: "제출이 접수되었습니다. 채점이 지연되고 있어 잠시 후 제출 기록에서 확인해 주세요.",
   };
 }
 
@@ -84,6 +105,19 @@ export async function executeJudgeAction(params: {
   }
 
   return executeServerAction({ action, source, stdin, problemId });
+}
+
+function toVerdictLabel(verdict: SafeCaseSummary["verdict"]) {
+  switch (verdict) {
+    case "RUNTIME_ERROR":
+      return "RE";
+    case "TIME_LIMIT_EXCEEDED":
+      return "TLE";
+    case "WRONG_ANSWER":
+      return "WA";
+    default:
+      return "PASS";
+  }
 }
 
 function sleep(ms: number) {

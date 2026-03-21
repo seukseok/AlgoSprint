@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 
+type CaseSummary = {
+  index: number;
+  scope: "sample" | "hidden";
+  passed: boolean;
+  verdict: "PASS" | "WRONG_ANSWER" | "RUNTIME_ERROR" | "TIME_LIMIT_EXCEEDED";
+};
+
 type HistoryItem = {
   id: string;
   problemId: string;
@@ -10,7 +17,12 @@ type HistoryItem = {
   elapsedMs: number | null;
   exitCode: number | null;
   createdAt: string;
-  testcaseSummary: { index: number; passed: boolean }[];
+  testcaseSummary: CaseSummary[];
+  stats?: {
+    totalTests: number;
+    passedTests: number;
+    failedIndexes: number[];
+  };
 };
 
 export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
@@ -44,13 +56,21 @@ export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
             <div className="mt-1 text-black/60 dark:text-white/60">
               {new Date(item.createdAt).toLocaleString()} · {item.elapsedMs ?? "-"}ms · 종료코드 {item.exitCode ?? "-"}
             </div>
+            {item.stats ? (
+              <div className="mt-1">
+                통과: {item.stats.passedTests}/{item.stats.totalTests}
+                {item.stats.failedIndexes.length ? ` · 실패 번호: ${item.stats.failedIndexes.join(", ")}` : " · 실패 없음"}
+              </div>
+            ) : null}
             {item.testcaseSummary?.length ? (
               <div className="mt-1">
-                {item.testcaseSummary.map((tc) => (
-                  <span key={tc.index} className="mr-2">
-                    #{tc.index}:{tc.passed ? "통과" : "실패"}
-                  </span>
-                ))}
+                {item.testcaseSummary
+                  .filter((tc) => !tc.passed)
+                  .map((tc) => (
+                    <span key={tc.index} className="mr-2">
+                      #{tc.index}({tc.scope === "sample" ? "샘플" : "숨김"}/{toShort(tc.verdict)})
+                    </span>
+                  ))}
               </div>
             ) : null}
             {item.output ? <pre className="mt-2 whitespace-pre-wrap text-[11px]">{item.output}</pre> : null}
@@ -59,4 +79,11 @@ export function SubmissionHistoryPanel({ problemId }: { problemId?: string }) {
       </div>
     </section>
   );
+}
+
+function toShort(verdict: CaseSummary["verdict"]) {
+  if (verdict === "RUNTIME_ERROR") return "RE";
+  if (verdict === "TIME_LIMIT_EXCEEDED") return "TLE";
+  if (verdict === "WRONG_ANSWER") return "WA";
+  return "PASS";
 }
