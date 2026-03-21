@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { getDashboardStats } from "@/lib/dashboard";
+import { auth } from "@/lib/auth";
+import { getSessionUser } from "@/lib/session-user";
 
 export default async function DashboardPage() {
-  const stats = await getDashboardStats();
+  const session = await auth();
+  const user = session?.user?.email ? await getSessionUser() : null;
+  const stats = await getDashboardStats(user?.id);
 
   return (
     <section className="space-y-6">

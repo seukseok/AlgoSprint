@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { SubmissionStatus } from "@prisma/client";
-import { getMockUser } from "@/lib/data";
 import { prisma } from "@/lib/prisma";
-import { judgeSubmission } from "@/lib/runner";
+import { enqueueSubmission } from "@/lib/queue";
+import { requireSessionUser } from "@/lib/session-user";
 
 type SubmitRequest = {
   problemId: string;
@@ -11,56 +10,45 @@ type SubmitRequest = {
 };
 
 export async function POST(request: Request) {
+  const session = await requireSessionUser();
+  if (session.error) return session.error;
+
   const body = (await request.json()) as SubmitRequest;
 
   if (!body?.problemId || !body.source) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  const user = await getMockUser();
-
   const queued = await prisma.submission.create({
     data: {
       problemId: body.problemId,
-      userId: user.id,
+      userId: session.user.id,
       source: body.source,
       language: body.language ?? "cpp17",
-      status: SubmissionStatus.RUNNING,
-      output: "Judging in progress...",
+      status: "QUEUED",
+      output: "Queued for judging...",
     },
   });
 
-  const judged = await judgeSubmission(body.problemId, body.source);
-
-  const submission = await prisma.submission.update({
-    where: { id: queued.id },
-    data: {
-      status: judged.status as SubmissionStatus,
-      output: judged.output,
-      testcaseSummary: JSON.stringify(judged.summary),
-      elapsedMs: judged.elapsedMs,
-      exitCode: judged.exitCode,
-      verdictReadyAt: new Date(),
-    },
-  });
+  await enqueueSubmission(queued.id);
 
   return NextResponse.json({
-    submissionId: submission.id,
-    status: submission.status,
-    message: submission.output,
-    testcaseSummary: judged.summary,
-    elapsedMs: judged.elapsedMs,
+    submissionId: queued.id,
+    status: queued.status,
+    message: queued.output,
   });
 }
 
 export async function GET(request: Request) {
-  const user = await getMockUser();
+  const session = await requireSessionUser();
+  if (session.error) return session.error;
+
   const { searchParams } = new URL(request.url);
   const problemId = searchParams.get("problemId");
 
   const rows = await prisma.submission.findMany({
     where: {
-      userId: user.id,
+      userId: session.user.id,
       ...(problemId ? { problemId } : {}),
     },
     orderBy: { createdAt: "desc" },

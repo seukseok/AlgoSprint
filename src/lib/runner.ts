@@ -3,19 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { problemCatalog } from "./problem-catalog";
-
-const COMPILE_TIMEOUT_MS = 8000;
-const RUN_TIMEOUT_MS = 2000;
-const OUTPUT_LIMIT_BYTES = 64 * 1024;
-
-const FORBIDDEN_PATTERNS = [
-  /#include\s*<sys\/socket.h>/,
-  /#include\s*<netinet\/in.h>/,
-  /\bsystem\s*\(/,
-  /\bpopen\s*\(/,
-  /\bfork\s*\(/,
-  /\bexec[a-z]*\s*\(/,
-];
+import { RUNNER_DENYLIST_PATTERNS, RUNNER_LIMITS } from "./runner-config";
 
 export type ExecutionResult = {
   success: boolean;
@@ -40,31 +28,28 @@ export type SubmissionCaseResult = {
 };
 
 export function checkForbiddenSource(source: string): string | null {
-  const hit = FORBIDDEN_PATTERNS.find((pattern) => pattern.test(source));
+  if (Buffer.byteLength(source, "utf8") > RUNNER_LIMITS.maxSourceBytes) {
+    return `Source too large (>${RUNNER_LIMITS.maxSourceBytes} bytes)`;
+  }
+
+  const hit = RUNNER_DENYLIST_PATTERNS.find((pattern) => pattern.test(source));
   return hit ? `Forbidden pattern detected: ${hit}` : null;
 }
 
 export async function compileAndRun(source: string, stdin: string): Promise<ExecutionResult> {
   const forbidden = checkForbiddenSource(source);
   if (forbidden) {
-    return {
-      success: false,
-      stdout: "",
-      stderr: forbidden,
-      compileError: forbidden,
-      exitCode: null,
-      elapsedMs: 0,
-    };
+    return failureFromForbidden(forbidden);
   }
 
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "algosprint-"));
-  const sourcePath = path.join(workspace, "main.cpp");
-  const binaryPath = path.join(workspace, "main.out");
+  const workspace = await createWorkspace("algosprint");
+  const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
+  const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
 
   try {
     await fs.writeFile(sourcePath, source, "utf8");
     const compile = await runProcess("g++", ["-std=c++17", "-O2", "-pipe", sourcePath, "-o", binaryPath], {
-      timeoutMs: COMPILE_TIMEOUT_MS,
+      timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
     });
 
     if (!compile.ok) {
@@ -79,7 +64,7 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
       };
     }
 
-    const run = await runProcess(binaryPath, [], { timeoutMs: RUN_TIMEOUT_MS, stdin });
+    const run = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin });
     return {
       success: !run.timedOut && run.exitCode === 0,
       stdout: run.stdout,
@@ -118,14 +103,14 @@ export async function judgeSubmission(problemId: string, source: string) {
     };
   }
 
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "algosprint-sub-"));
-  const sourcePath = path.join(workspace, "main.cpp");
-  const binaryPath = path.join(workspace, "main.out");
+  const workspace = await createWorkspace("algosprint-sub");
+  const sourcePath = path.join(workspace, sanitizeFileName("main.cpp"));
+  const binaryPath = path.join(workspace, sanitizeFileName("main.out"));
 
   try {
     await fs.writeFile(sourcePath, source, "utf8");
     const compile = await runProcess("g++", ["-std=c++17", "-O2", "-pipe", sourcePath, "-o", binaryPath], {
-      timeoutMs: COMPILE_TIMEOUT_MS,
+      timeoutMs: RUNNER_LIMITS.compileTimeoutMs,
     });
 
     if (!compile.ok) {
@@ -144,7 +129,7 @@ export async function judgeSubmission(problemId: string, source: string) {
 
     for (let i = 0; i < tests.length; i += 1) {
       const tc = tests[i];
-      const result = await runProcess(binaryPath, [], { timeoutMs: RUN_TIMEOUT_MS, stdin: tc.input });
+      const result = await runProcess(binaryPath, [], { timeoutMs: RUNNER_LIMITS.runTimeoutMs, stdin: tc.input });
       totalElapsed += result.elapsedMs;
       latestExitCode = result.exitCode;
 
@@ -211,6 +196,38 @@ function normalize(value: string) {
   return value.replace(/\s+$/g, "").trimEnd();
 }
 
+function sanitizeFileName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
+}
+
+async function createWorkspace(prefix: string) {
+  const safePrefix = sanitizeFileName(prefix);
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), `${safePrefix}-`));
+  const resolved = path.resolve(workspace);
+  const tmp = path.resolve(os.tmpdir());
+  if (!resolved.startsWith(tmp)) {
+    throw new Error("Invalid workspace path");
+  }
+  return resolved;
+}
+
+function safeTruncate(text: string, maxBytes: number) {
+  const buffer = Buffer.from(text, "utf8");
+  if (buffer.byteLength <= maxBytes) return text;
+  return `${buffer.subarray(0, maxBytes).toString("utf8")}\n[truncated]`;
+}
+
+function failureFromForbidden(message: string): ExecutionResult {
+  return {
+    success: false,
+    stdout: "",
+    stderr: message,
+    compileError: message,
+    exitCode: null,
+    elapsedMs: 0,
+  };
+}
+
 async function runProcess(
   command: string,
   args: string[],
@@ -233,7 +250,7 @@ async function runProcess(
 
     child.stdout.on("data", (chunk: Buffer) => {
       total += chunk.length;
-      if (total > OUTPUT_LIMIT_BYTES) {
+      if (total > RUNNER_LIMITS.outputLimitBytes) {
         killedForOutput = true;
         child.kill("SIGKILL");
         return;
@@ -243,7 +260,7 @@ async function runProcess(
 
     child.stderr.on("data", (chunk: Buffer) => {
       total += chunk.length;
-      if (total > OUTPUT_LIMIT_BYTES) {
+      if (total > RUNNER_LIMITS.outputLimitBytes) {
         killedForOutput = true;
         child.kill("SIGKILL");
         return;
@@ -258,6 +275,7 @@ async function runProcess(
       if (killedForOutput) {
         stderr += "\n[runner] output limit exceeded";
       }
+      stderr = safeTruncate(stderr, RUNNER_LIMITS.stderrLogLimitBytes);
       const elapsedMs = Date.now() - start;
 
       resolve({

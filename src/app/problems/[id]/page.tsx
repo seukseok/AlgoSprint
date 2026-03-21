@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import { EditorWorkspace } from "@/components/editor-workspace";
 import { SubmissionHistoryPanel } from "@/components/submission-history-panel";
 import { findProblem, getProblems } from "@/lib/problems";
@@ -14,6 +15,9 @@ export default async function ProblemDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user?.email) redirect("/auth/signin");
+
   const { id } = await params;
   const problem = await findProblem(id);
   if (!problem) return notFound();

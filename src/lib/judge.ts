@@ -16,7 +16,7 @@ async function executeServerAction(params: {
     return {
       action: params.action,
       success: false,
-      output: "Server execute request failed.",
+      output: response.status === 401 ? "Please sign in first." : "Server execute request failed.",
     };
   }
 
@@ -38,7 +38,7 @@ async function submitAndPoll(params: { source: string; problemId: string }): Pro
     return {
       action: "submit",
       success: false,
-      output: "Submit request failed.",
+      output: submitResponse.status === 401 ? "Please sign in first." : "Submit request failed.",
     };
   }
 

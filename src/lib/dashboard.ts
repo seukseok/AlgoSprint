@@ -1,19 +1,20 @@
 import { SubmissionStatus } from "@prisma/client";
-import { ensureAppData, getMockUser } from "./data";
+import { ensureAppData } from "./data";
 import { prisma } from "./prisma";
 
-export async function getDashboardStats() {
+export async function getDashboardStats(userId?: string) {
   await ensureAppData();
-  const user = await getMockUser();
 
   const [problemCount, attempts, solvedIds] = await Promise.all([
     prisma.problem.count(),
-    prisma.submission.count({ where: { userId: user.id } }),
-    prisma.submission.findMany({
-      where: { userId: user.id, status: SubmissionStatus.ACCEPTED },
-      select: { problemId: true },
-      distinct: ["problemId"],
-    }),
+    userId ? prisma.submission.count({ where: { userId } }) : Promise.resolve(0),
+    userId
+      ? prisma.submission.findMany({
+          where: { userId, status: SubmissionStatus.ACCEPTED },
+          select: { problemId: true },
+          distinct: ["problemId"],
+        })
+      : Promise.resolve([]),
   ]);
 
   return {

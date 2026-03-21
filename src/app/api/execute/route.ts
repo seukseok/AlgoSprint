@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getMockUser } from "@/lib/data";
 import { prisma } from "@/lib/prisma";
 import { JudgeAction } from "@/lib/types";
 import { compileAndRun } from "@/lib/runner";
+import { requireSessionUser } from "@/lib/session-user";
 
 type ExecuteRequest = {
   action: Exclude<JudgeAction, "submit">;
@@ -12,15 +12,16 @@ type ExecuteRequest = {
 };
 
 export async function POST(request: Request) {
+  const session = await requireSessionUser();
+  if (session.error) return session.error;
+
   const body = (await request.json()) as ExecuteRequest;
 
   if (!body?.action || !body.problemId || !body.source) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  const user = await getMockUser();
   const stdin = body.stdin ?? "";
-
   const execution = await compileAndRun(body.source, body.action === "run" ? stdin : "");
 
   let output = "";
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
       timeMs: execution.elapsedMs,
       memoryKb: null,
       exitCode: execution.exitCode,
-      userId: user.id,
+      userId: session.user.id,
       problemId: body.problemId,
     },
   });

@@ -1,24 +1,25 @@
 import { NextResponse } from "next/server";
-import { SubmissionStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-
-const FINAL_STATUSES = new Set<SubmissionStatus>([
-  SubmissionStatus.ACCEPTED,
-  SubmissionStatus.WRONG_ANSWER,
-  SubmissionStatus.COMPILATION_ERROR,
-  SubmissionStatus.RUNTIME_ERROR,
-  SubmissionStatus.TIME_LIMIT_EXCEEDED,
-]);
+import { isFinalStatus } from "@/lib/queue";
+import { requireSessionUser } from "@/lib/session-user";
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireSessionUser();
+  if (session.error) return session.error;
+
   const { id } = await params;
   const submission = await prisma.submission.findUnique({ where: { id } });
 
-  if (!submission) {
+  if (!submission || submission.userId !== session.user.id) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
 
-  const done = FINAL_STATUSES.has(submission.status);
+  await prisma.submission.update({
+    where: { id },
+    data: { polledCount: { increment: 1 } },
+  });
+
+  const done = isFinalStatus(submission.status);
 
   return NextResponse.json({
     id: submission.id,

@@ -2,21 +2,10 @@ import { Difficulty, Prisma } from "@prisma/client";
 import { problemCatalog } from "./problem-catalog";
 import { prisma } from "./prisma";
 
-const DEMO_USER_EMAIL = "demo@algosprint.local";
-
 let initialized = false;
 
 export async function ensureAppData() {
   if (initialized) return;
-
-  await prisma.user.upsert({
-    where: { email: DEMO_USER_EMAIL },
-    update: {},
-    create: {
-      email: DEMO_USER_EMAIL,
-      name: "Demo User",
-    },
-  });
 
   for (const problem of problemCatalog) {
     await prisma.problem.upsert({
@@ -46,12 +35,6 @@ export async function ensureAppData() {
   }
 
   initialized = true;
-}
-
-export async function getMockUser() {
-  await ensureAppData();
-  const user = await prisma.user.findUniqueOrThrow({ where: { email: DEMO_USER_EMAIL } });
-  return user;
 }
 
 export type ProblemDTO = {

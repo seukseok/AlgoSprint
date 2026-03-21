@@ -1,6 +1,10 @@
+import { redirect } from "next/navigation";
 import { SubmissionHistoryPanel } from "@/components/submission-history-panel";
+import { auth } from "@/lib/auth";
 
-export default function SubmissionsPage() {
+export default async function SubmissionsPage() {
+  const session = await auth();
+  if (!session?.user?.email) redirect("/auth/signin");
   return (
     <section className="space-y-4">
       <div>
