@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { problems } from "@/lib/problems";
+import { getDashboardStats } from "@/lib/dashboard";
 
-export default function DashboardPage() {
-  const easy = problems.filter((p) => p.difficulty === "Easy").length;
-  const mediumOrHard = problems.length - easy;
+export default async function DashboardPage() {
+  const stats = await getDashboardStats();
 
   return (
     <section className="space-y-6">
@@ -14,10 +13,11 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Card title="Total problems" value={`${problems.length}`} />
-        <Card title="Easy" value={`${easy}`} />
-        <Card title="Medium/Hard" value={`${mediumOrHard}`} />
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card title="Total problems" value={`${stats.totalProblems}`} />
+        <Card title="Attempts" value={`${stats.attemptCount}`} />
+        <Card title="Solved" value={`${stats.solvedCount}`} />
+        <Card title="Streak" value={`${stats.streakDays} day`} />
       </div>
 
       <div className="rounded-md border border-black/10 bg-white p-5 dark:border-white/10 dark:bg-[#111827]">

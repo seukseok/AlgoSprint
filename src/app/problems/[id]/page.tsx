@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { EditorWorkspace } from "@/components/editor-workspace";
-import { findProblem, problems } from "@/lib/problems";
+import { findProblem, getProblems } from "@/lib/problems";
 
-export function generateStaticParams() {
+export async function generateStaticParams() {
+  const problems = await getProblems();
   return problems.map((problem) => ({ id: problem.id }));
 }
 
@@ -13,7 +14,7 @@ export default async function ProblemDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const problem = findProblem(id);
+  const problem = await findProblem(id);
   if (!problem) return notFound();
 
   return (

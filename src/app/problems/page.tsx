@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { problems } from "@/lib/problems";
+import { getProblems } from "@/lib/problems";
 
-export default function ProblemListPage() {
+export default async function ProblemListPage() {
+  const problems = await getProblems();
+
   return (
     <section className="space-y-5">
       <div>

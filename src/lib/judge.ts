@@ -1,61 +1,69 @@
 import { JudgeAction, JudgeResult } from "./types";
 
-export interface JudgeGateway {
-  compile(source: string, language: "cpp17"): Promise<JudgeResult>;
-  run(source: string, stdin: string, language: "cpp17"): Promise<JudgeResult>;
-  debug(source: string, stdin: string, language: "cpp17"): Promise<JudgeResult>;
-  submit(problemId: string, source: string, language: "cpp17"): Promise<JudgeResult>;
+async function executeServerAction(params: {
+  action: Exclude<JudgeAction, "submit">;
+  source: string;
+  stdin: string;
+  problemId: string;
+}): Promise<JudgeResult> {
+  const response = await fetch("/api/execute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    return {
+      action: params.action,
+      success: false,
+      output: "Server execute request failed.",
+    };
+  }
+
+  return (await response.json()) as JudgeResult;
 }
 
-class MockJudgeGateway implements JudgeGateway {
-  private fakeDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function submitAndPoll(params: { source: string; problemId: string }): Promise<JudgeResult> {
+  const submitResponse = await fetch("/api/submissions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: params.source,
+      problemId: params.problemId,
+      language: "cpp17",
+    }),
+  });
 
-  async compile(source: string): Promise<JudgeResult> {
-    await this.fakeDelay(500);
-    const hasMain = source.includes("main(");
-    return {
-      action: "compile",
-      success: hasMain,
-      output: hasMain
-        ? "Compilation successful (mock). Ready to run."
-        : "Compilation failed (mock): missing main()",
-    };
-  }
-
-  async run(source: string, stdin: string): Promise<JudgeResult> {
-    await this.fakeDelay(700);
-    return {
-      action: "run",
-      success: true,
-      output: `Program executed (mock).\\nInput:\\n${stdin || "(empty)"}\\n\\nOutput:\\nHello from local runner placeholder.`,
-      timeMs: 8,
-      memoryKb: 2560,
-    };
-  }
-
-  async debug(_source: string, _stdin: string): Promise<JudgeResult> {
-    void _source;
-    void _stdin;
-    await this.fakeDelay(600);
-    return {
-      action: "debug",
-      success: true,
-      output:
-        "Debug session is currently a mock flow.\\nBreakpoint panel and step controls are UI-ready for backend integration.",
-    };
-  }
-
-  async submit(problemId: string): Promise<JudgeResult> {
-    await this.fakeDelay(900);
+  if (!submitResponse.ok) {
     return {
       action: "submit",
-      success: true,
-      output: `Submission queued to judge (mock).\\nProblem: ${problemId}\\nVerdict: Pending`,
+      success: false,
+      output: "Submit request failed.",
     };
   }
-}
 
-export const judgeGateway: JudgeGateway = new MockJudgeGateway();
+  const submitData = (await submitResponse.json()) as { submissionId: string };
+
+  for (let i = 0; i < 8; i += 1) {
+    await sleep(900);
+    const poll = await fetch(`/api/submissions/${submitData.submissionId}`, { cache: "no-store" });
+    if (!poll.ok) break;
+    const polled = (await poll.json()) as { status: string; done: boolean; output: string };
+    if (polled.done) {
+      return {
+        action: "submit",
+        success: polled.status === "ACCEPTED",
+        output: `${polled.output}\nStatus: ${polled.status}`,
+      };
+    }
+  }
+
+  return {
+    action: "submit",
+    success: true,
+    output: "Submission queued. Verdict still pending.",
+  };
+}
 
 export async function executeJudgeAction(params: {
   action: JudgeAction;
@@ -64,8 +72,14 @@ export async function executeJudgeAction(params: {
   problemId: string;
 }) {
   const { action, source, stdin, problemId } = params;
-  if (action === "compile") return judgeGateway.compile(source, "cpp17");
-  if (action === "run") return judgeGateway.run(source, stdin, "cpp17");
-  if (action === "debug") return judgeGateway.debug(source, stdin, "cpp17");
-  return judgeGateway.submit(problemId, source, "cpp17");
+
+  if (action === "submit") {
+    return submitAndPoll({ source, problemId });
+  }
+
+  return executeServerAction({ action, source, stdin, problemId });
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
