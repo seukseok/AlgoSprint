@@ -4,9 +4,16 @@ import { auth } from "@/lib/auth";
 import { getSessionUser } from "@/lib/session-user";
 
 export default async function DashboardPage() {
-  const session = await auth();
-  const user = session?.user?.email ? await getSessionUser() : null;
-  const stats = await getDashboardStats(user?.id);
+  let userId: string | undefined;
+  try {
+    const session = await auth();
+    const user = session?.user?.email ? await getSessionUser() : null;
+    userId = user?.id;
+  } catch {
+    userId = undefined;
+  }
+
+  const stats = await getDashboardStats(userId);
 
   return (
     <section className="space-y-6">
