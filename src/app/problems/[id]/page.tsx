@@ -15,8 +15,12 @@ export default async function ProblemDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.email) redirect("/auth/signin");
+  try {
+    const session = await auth();
+    if (!session?.user?.email) redirect("/auth/signin");
+  } catch {
+    redirect("/auth/signin");
+  }
 
   const { id } = await params;
   const problem = await findProblem(id);
