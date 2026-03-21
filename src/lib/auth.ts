@@ -6,7 +6,8 @@ function devCredentialConfig() {
   const isDev = process.env.NODE_ENV !== "production";
   const email = process.env.DEV_LOGIN_EMAIL ?? (isDev ? "dev@algosprint.local" : undefined);
   const password = process.env.DEV_LOGIN_PASSWORD ?? (isDev ? "devpass123" : undefined);
-  return { isDev, email, password };
+  const allow = Boolean(email && password);
+  return { isDev, email, password, allow };
 }
 
 const providers: NextAuthOptions["providers"] = [];
@@ -28,8 +29,8 @@ providers.push(
       password: { label: "Password", type: "password" },
     },
     async authorize(credentials) {
-      const { isDev, email, password } = devCredentialConfig();
-      if (!isDev || !email || !password) return null;
+      const { allow, email, password } = devCredentialConfig();
+      if (!allow || !email || !password) return null;
 
       const submittedEmail = String(credentials?.email ?? "").trim().toLowerCase();
       const submittedPassword = String(credentials?.password ?? "");
