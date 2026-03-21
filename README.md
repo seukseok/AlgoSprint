@@ -1,70 +1,85 @@
 # AlgoSprint C++
 
-Minimal, practical algorithm-learning web app scaffolded with Next.js + TypeScript.
+Practical algorithm-learning web app built with Next.js + TypeScript.
 
-## Milestone 1 scope
+## Milestone 2 scope
 
-Implemented in this milestone:
+Implemented:
 
-- Next.js app scaffold (`app/` router, TypeScript)
-- Minimal clean UI (dashboard, problem list, problem detail/workspace)
-- Monaco-based C++ coding workspace
-- Action flow buttons + keyboard shortcuts:
-  - Compile (`Ctrl/Cmd + Shift + B`)
-  - Run (`Ctrl/Cmd + Enter`)
-  - Debug (`F5`)
-  - Submit (`Ctrl/Cmd + S`)
-- Editor theme options:
-  - GitHub Dark (custom Monaco theme)
-  - VS Code Dark (`vs-dark`)
-  - VS Code Light (`vs`)
-- Judge integration-ready service layer (`src/lib/judge.ts`)
+- Persistent backend foundation inside Next app (App Router API routes)
+- Prisma + SQLite dev persistence for users/problems/runs/submissions/drafts
+- Server-side execute/submit flow (mock judge behavior, persisted run/submission history)
+- Async verdict simulation + polling endpoint
+- Dashboard stats backed by database (attempts, solved, streak placeholder)
+- Workspace UX upgrades:
+  - per-problem code draft persistence (localStorage + server sync)
+  - keyboard shortcut help modal
+  - action output panel with tabs (compile/run/debug/submit)
+
+## API routes
+
+- `GET /api/problems` — list problems
+- `GET /api/problems/:id` — problem detail
+- `POST /api/execute` — compile/run/debug request (server-side mocked execution + persisted run log)
+- `POST /api/submissions` — create queued submission
+- `GET /api/submissions/:id` — poll simulated verdict state
+- `GET /api/drafts/:problemId` — get saved draft for mock user
+- `PUT /api/drafts/:problemId` — save draft for mock user
+
+## Persistence model (Prisma)
+
+- `User`
+- `Problem`
+- `Submission`
+- `Run`
+- `CodeDraft`
+
+Schema: `prisma/schema.prisma`
+
+## Auth strategy (placeholder)
+
+Current milestone intentionally uses a single seeded mock user (`demo@algosprint.local`) via server helper.
+This keeps development moving while keeping route contracts user-aware.
+
+Planned migration path to NextAuth:
+
+1. Add NextAuth session provider and DB-backed adapter.
+2. Replace `getMockUser()` with `getServerSession()` + user upsert.
+3. Keep existing data model (`userId` relations already in place).
+4. Gradually switch APIs to require authenticated session.
 
 ## Real vs placeholder
 
-### Real (working now)
+### Real now
 
-- Page routing and shell UX
-- Monaco editor integration for C++
-- Keyboard shortcuts + action dispatch
-- Compile/Run/Debug/Submit action pipeline via `executeJudgeAction()`
-- Console output panel and basic input panel
+- API-backed execution flow from UI
+- Persisted problem/submission/run/draft data on SQLite
+- Polling-based async verdict lifecycle (QUEUED -> RUNNING -> final verdict)
+- Dashboard stats from submissions data
 
-### Placeholder (for next milestones)
+### Placeholder for future milestones
 
-- Real compiler/runtime sandbox (currently mocked)
-- Real debugger backend and step/breakpoint synchronization (UI flow exists)
-- Real submission + verdict polling against online judge
-- Authentication, persistence, and user submission history
+- Real sandboxed C++ compilation/execution infra
+- Real debugger protocol bridge
+- Real testcase-by-testcase judge feedback
+- Production authentication and permissions
+- Queue/worker isolation for judge jobs
 
 ## Run locally
 
 ```bash
 cd /home/seukseok/.openclaw/workspace/projects/algosprint-app
 npm install
+npx prisma generate
+npx prisma db push
 npm run dev
 ```
 
 Open <http://localhost:3000>
 
-## Build check
+## Quality checks
 
 ```bash
+npm run lint
 npm run build
 ```
-
-## Project structure (key files)
-
-- `src/app/page.tsx` — dashboard
-- `src/app/problems/page.tsx` — problem list
-- `src/app/problems/[id]/page.tsx` — problem detail + workspace
-- `src/components/editor-workspace.tsx` — Monaco editor and action/shortcut handling
-- `src/lib/problems.ts` — sample problem dataset
-- `src/lib/judge.ts` — judge gateway interface + mock implementation
-
-## Architecture notes for online judge integration
-
-- Keep UI calling `executeJudgeAction(...)` only.
-- Swap `judgeGateway` implementation from mock to API-backed gateway.
-- Add async job IDs + polling/websocket stream for compile/run/submit outputs.
-- Extend `JudgeResult` with testcase breakdown, compile errors, and verdict metadata.

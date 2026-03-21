@@ -14,6 +14,15 @@ const actions: { key: JudgeAction; label: string; shortcut: string }[] = [
 
 type EditorTheme = "github-dark" | "vs-dark" | "vs";
 
+type OutputMap = Record<JudgeAction, string>;
+
+const initialOutputs: OutputMap = {
+  compile: "Compile output will appear here.",
+  run: "Run output will appear here.",
+  debug: "Debug output will appear here.",
+  submit: "Submit output will appear here.",
+};
+
 export function EditorWorkspace({
   problemId,
   starterCode,
@@ -24,12 +33,55 @@ export function EditorWorkspace({
   const [code, setCode] = useState(starterCode);
   const [stdin, setStdin] = useState("");
   const [activeTheme, setActiveTheme] = useState<EditorTheme>("vs-dark");
-  const [lastOutput, setLastOutput] = useState("Ready.");
   const [running, setRunning] = useState<JudgeAction | null>(null);
+  const [activeOutputTab, setActiveOutputTab] = useState<JudgeAction>("compile");
+  const [outputs, setOutputs] = useState<OutputMap>(initialOutputs);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+  const [draftSyncLabel, setDraftSyncLabel] = useState("Not synced yet");
+
+  useEffect(() => {
+    const key = `algosprint:draft:${problemId}`;
+
+    void (async () => {
+      const localCode = window.localStorage.getItem(key);
+      if (localCode) {
+        setCode(localCode);
+      }
+
+      const response = await fetch(`/api/drafts/${problemId}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { code: string | null };
+      if (data.code) {
+        setCode(data.code);
+        window.localStorage.setItem(key, data.code);
+        setDraftSyncLabel("Draft restored from server");
+      }
+    })();
+  }, [problemId]);
+
+  useEffect(() => {
+    const key = `algosprint:draft:${problemId}`;
+    window.localStorage.setItem(key, code);
+
+    const timeout = setTimeout(() => {
+      void (async () => {
+        const response = await fetch(`/api/drafts/${problemId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+
+        if (response.ok) setDraftSyncLabel(`Synced at ${new Date().toLocaleTimeString()}`);
+      })();
+    }, 900);
+
+    return () => clearTimeout(timeout);
+  }, [code, problemId]);
 
   const runAction = useCallback(
     async (action: JudgeAction) => {
       setRunning(action);
+      setActiveOutputTab(action);
       const result = await executeJudgeAction({
         action,
         source: code,
@@ -40,7 +92,9 @@ export function EditorWorkspace({
         result.timeMs || result.memoryKb
           ? `\n\n[metrics] time=${result.timeMs ?? "-"}ms memory=${result.memoryKb ?? "-"}KB`
           : "";
-      setLastOutput(`[${result.action.toUpperCase()}] ${result.success ? "SUCCESS" : "FAILED"}\n${result.output}${metrics}`);
+
+      const text = `[${result.action.toUpperCase()}] ${result.success ? "SUCCESS" : "FAILED"}\n${result.output}${metrics}`;
+      setOutputs((prev) => ({ ...prev, [action]: text }));
       setRunning(null);
     },
     [code, stdin, problemId],
@@ -64,6 +118,10 @@ export function EditorWorkspace({
       if (meta && (event.key === "S" || event.key === "s")) {
         event.preventDefault();
         void runAction("submit");
+      }
+      if (event.key === "?" && event.shiftKey) {
+        event.preventDefault();
+        setShowShortcutHelp((prev) => !prev);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -104,6 +162,12 @@ export function EditorWorkspace({
               {action.label}
             </button>
           ))}
+          <button
+            onClick={() => setShowShortcutHelp(true)}
+            className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+          >
+            Shortcuts
+          </button>
         </div>
         <label className="flex items-center gap-2 text-sm">
           Editor theme
@@ -118,6 +182,8 @@ export function EditorWorkspace({
           </select>
         </label>
       </div>
+
+      <div className="text-xs text-black/60 dark:text-white/60">Draft status: {draftSyncLabel}</div>
 
       <div className="grid gap-3 lg:grid-cols-[2fr,1fr]">
         <div className="h-[520px] overflow-hidden rounded-md border border-black/10 dark:border-white/10">
@@ -148,23 +214,54 @@ export function EditorWorkspace({
             />
           </div>
 
-          <div className="rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
-            <h3 className="mb-2 text-sm font-semibold">Debug Panel</h3>
-            <p className="text-sm text-black/70 dark:text-white/70">
-              Breakpoints/watch/step controls are prepared in UI flow. Runtime debugger backend is a placeholder in this milestone.
-            </p>
-          </div>
-
           <div className="rounded-md border border-black/10 bg-black p-3 text-xs text-green-300 dark:border-white/10">
-            <h3 className="mb-2 text-sm font-semibold text-white">Console</h3>
-            <pre className="whitespace-pre-wrap">{running ? `Running ${running}...` : lastOutput}</pre>
+            <div className="mb-2 flex flex-wrap gap-2">
+              {actions.map((action) => (
+                <button
+                  key={action.key}
+                  onClick={() => setActiveOutputTab(action.key)}
+                  className={`rounded px-2 py-1 text-xs ${
+                    activeOutputTab === action.key ? "bg-white/20 text-white" : "bg-white/5 text-green-200"
+                  }`}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <h3 className="mb-2 text-sm font-semibold text-white">Action Output</h3>
+            <pre className="whitespace-pre-wrap">{running === activeOutputTab ? `Running ${running}...` : outputs[activeOutputTab]}</pre>
           </div>
         </div>
       </div>
 
-      <div className="rounded-md border border-black/10 bg-white p-3 text-xs text-black/70 dark:border-white/10 dark:bg-[#111827] dark:text-white/70">
-        Shortcuts: {actions.map((action) => `${action.label} (${action.shortcut})`).join(" · ")}
-      </div>
+      {showShortcutHelp ? (
+        <div className="fixed inset-0 z-20 grid place-items-center bg-black/50 p-4" onClick={() => setShowShortcutHelp(false)}>
+          <div
+            className="w-full max-w-md rounded-md border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-[#111827]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
+            <ul className="mt-3 space-y-2 text-sm">
+              {actions.map((action) => (
+                <li key={action.key} className="flex justify-between">
+                  <span>{action.label}</span>
+                  <span className="text-black/60 dark:text-white/60">{action.shortcut}</span>
+                </li>
+              ))}
+              <li className="flex justify-between">
+                <span>Toggle this help</span>
+                <span className="text-black/60 dark:text-white/60">Shift + ?</span>
+              </li>
+            </ul>
+            <button
+              onClick={() => setShowShortcutHelp(false)}
+              className="mt-4 rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
