@@ -4,22 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "worker:loop": "node scripts/worker-loop.mjs",
-    "runner:selftest": "node scripts/runner-selftest.mjs",
-    "smoke": "npm run lint && npm run build && npm run runner:selftest",
-    "postinstall": "prisma generate"
+    "lint": "eslint"
   },
   "dependencies": {
-    "@auth/core": "^0.34.3",
     "@monaco-editor/react": "^4.7.0",
-    "@prisma/client": "^6.15.0",
-    "ioredis": "^5.10.1",
     "monaco-editor": "^0.55.1",
     "next": "16.2.0",
-    "next-auth": "^4.24.13",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -30,7 +22,6 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.0",
-    "prisma": "^6.15.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

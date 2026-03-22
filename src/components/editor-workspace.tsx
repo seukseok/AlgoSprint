@@ -25,58 +25,39 @@ const initialOutputs: OutputMap = {
 const PUBLIC_EXEC_MODE = process.env.NEXT_PUBLIC_RUNNER_EXECUTION_MODE ?? "local";
 const IS_NON_SANDBOXED = process.env.NEXT_PUBLIC_RUNNER_SANDBOXED !== "1" || PUBLIC_EXEC_MODE !== "isolated";
 
-export function EditorWorkspace({
-  problemId,
-  starterCode,
-}: {
-  problemId: string;
-  starterCode: string;
-}) {
+export function EditorWorkspace({ starterCode }: { starterCode: string }) {
   const [code, setCode] = useState(starterCode);
   const [stdin, setStdin] = useState("");
+  const [sampleInput, setSampleInput] = useState("");
   const [activeTheme, setActiveTheme] = useState<EditorTheme>("vs-dark");
   const [running, setRunning] = useState<JudgeAction | null>(null);
   const [activeOutputTab, setActiveOutputTab] = useState<JudgeAction>("compile");
   const [outputs, setOutputs] = useState<OutputMap>(initialOutputs);
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
-  const [draftSyncLabel, setDraftSyncLabel] = useState("아직 동기화되지 않음");
+  const [bojUrl, setBojUrl] = useState("https://www.acmicpc.net");
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [iframeTimedOut, setIframeTimedOut] = useState(false);
 
   useEffect(() => {
-    const key = `algosprint:draft:${problemId}`;
-
-    void (async () => {
-      const localCode = window.localStorage.getItem(key);
-      if (localCode) setCode(localCode);
-
-      const response = await fetch(`/api/drafts/${problemId}`, { cache: "no-store" });
-      if (!response.ok) return;
-      const data = (await response.json()) as { code: string | null };
-      if (data.code) {
-        setCode(data.code);
-        window.localStorage.setItem(key, data.code);
-        setDraftSyncLabel("서버에서 임시 코드를 복원했습니다");
-      }
-    })();
-  }, [problemId]);
+    const localCode = window.localStorage.getItem("algosprint:compiler:code");
+    const localStdin = window.localStorage.getItem("algosprint:compiler:stdin");
+    const localBojUrl = window.localStorage.getItem("algosprint:compiler:boj-url");
+    if (localCode) setCode(localCode);
+    if (localStdin) setStdin(localStdin);
+    if (localBojUrl) setBojUrl(localBojUrl);
+  }, []);
 
   useEffect(() => {
-    const key = `algosprint:draft:${problemId}`;
-    window.localStorage.setItem(key, code);
+    window.localStorage.setItem("algosprint:compiler:code", code);
+  }, [code]);
 
-    const timeout = setTimeout(() => {
-      void (async () => {
-        const response = await fetch(`/api/drafts/${problemId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
-        });
+  useEffect(() => {
+    window.localStorage.setItem("algosprint:compiler:stdin", stdin);
+  }, [stdin]);
 
-        if (response.ok) setDraftSyncLabel(`동기화 시각: ${new Date().toLocaleTimeString()}`);
-      })();
-    }, 900);
-
-    return () => clearTimeout(timeout);
-  }, [code, problemId]);
+  useEffect(() => {
+    window.localStorage.setItem("algosprint:compiler:boj-url", bojUrl);
+  }, [bojUrl]);
 
   const runAction = useCallback(
     async (action: JudgeAction) => {
@@ -84,7 +65,7 @@ export function EditorWorkspace({
       setRunning(action);
       setActiveOutputTab(action);
       try {
-        const result = await executeJudgeAction({ action, source: code, stdin, problemId });
+        const result = await executeJudgeAction({ action, source: code, stdin });
         const metrics = result.timeMs || result.memoryKb ? `\n\n[metrics] time=${result.timeMs ?? "-"}ms memory=${result.memoryKb ?? "-"}KB` : "";
         const text = `[${result.action.toUpperCase()}] ${result.success ? "성공" : "실패"}\n${result.output}${metrics}`;
         setOutputs((prev) => ({ ...prev, [action]: text }));
@@ -92,7 +73,7 @@ export function EditorWorkspace({
         setRunning(null);
       }
     },
-    [code, stdin, problemId, running],
+    [code, stdin, running],
   );
 
   useEffect(() => {
@@ -122,6 +103,16 @@ export function EditorWorkspace({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [runAction]);
+
+  useEffect(() => {
+    setIframeLoaded(false);
+    setIframeTimedOut(false);
+    const timer = setTimeout(() => {
+      setIframeTimedOut(true);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [bojUrl]);
 
   const onMount: OnMount = useCallback((editor, monaco) => {
     monaco.editor.defineTheme("github-dark", {
@@ -163,6 +154,12 @@ export function EditorWorkspace({
           >
             단축키
           </button>
+          <button
+            onClick={() => navigator.clipboard.writeText(code)}
+            className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+          >
+            코드 복사
+          </button>
         </div>
         <label className="flex items-center gap-2 text-sm">
           에디터 테마
@@ -178,16 +175,14 @@ export function EditorWorkspace({
         </label>
       </div>
 
-      <div className="text-xs text-black/60 dark:text-white/60">임시 코드 상태: {draftSyncLabel}</div>
-
       {IS_NON_SANDBOXED ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/70 dark:bg-amber-900/20 dark:text-amber-200">
           경고: 현재 실행 환경은 비격리 모드(local)입니다. 신뢰 가능한 코드만 실행하고, 외부 공개 환경에서는 반드시 RUNNER_EXECUTION_MODE=isolated + 컨테이너 격리를 사용하세요.
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-[2fr,1fr]">
-        <div className="h-[520px] overflow-hidden rounded-md border border-black/10 dark:border-white/10">
+      <div className="grid gap-3 xl:grid-cols-[1.6fr,1fr,1fr]">
+        <div className="h-[620px] overflow-hidden rounded-md border border-black/10 dark:border-white/10">
           <Editor
             height="100%"
             defaultLanguage="cpp"
@@ -210,9 +205,34 @@ export function EditorWorkspace({
             <textarea
               value={stdin}
               onChange={(event) => setStdin(event.target.value)}
-              placeholder="선택 입력값"
-              className="h-28 w-full rounded border border-black/10 bg-transparent p-2 text-sm outline-none focus:border-black/30 dark:border-white/15"
+              placeholder="BOJ 샘플 입력을 붙여넣으세요"
+              className="h-44 w-full rounded border border-black/10 bg-transparent p-2 text-sm outline-none focus:border-black/30 dark:border-white/15"
             />
+          </div>
+
+          <div className="rounded-md border border-black/10 bg-white p-3 text-xs dark:border-white/10 dark:bg-[#111827]">
+            <h3 className="mb-2 text-sm font-semibold">BOJ 붙여넣기 도우미</h3>
+            <p className="mb-2 text-black/70 dark:text-white/70">BOJ 문제 페이지의 예제 입력을 복사해 아래 칸에 붙여넣고, 적용 버튼으로 stdin에 반영하세요.</p>
+            <textarea
+              value={sampleInput}
+              onChange={(event) => setSampleInput(event.target.value)}
+              placeholder="예제 입력 임시 붙여넣기 영역"
+              className="h-24 w-full rounded border border-black/10 bg-transparent p-2 text-sm outline-none focus:border-black/30 dark:border-white/15"
+            />
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={() => setStdin(sampleInput)}
+                className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+              >
+                stdin에 적용
+              </button>
+              <button
+                onClick={() => navigator.clipboard.writeText(stdin)}
+                className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+              >
+                stdin 복사
+              </button>
+            </div>
           </div>
 
           <div className="rounded-md border border-black/10 bg-black p-3 text-xs text-green-300 dark:border-white/10">
@@ -232,6 +252,48 @@ export function EditorWorkspace({
             <h3 className="mb-2 text-sm font-semibold text-white">실행 결과</h3>
             <pre className="whitespace-pre-wrap">{running === activeOutputTab ? `${actions.find((a) => a.key === running)?.label} 실행 중...` : outputs[activeOutputTab]}</pre>
           </div>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
+          <h3 className="text-sm font-semibold">BOJ 컴패니언</h3>
+          <label className="text-xs text-black/70 dark:text-white/70">문제 URL</label>
+          <input
+            value={bojUrl}
+            onChange={(event) => setBojUrl(event.target.value)}
+            placeholder="https://www.acmicpc.net/problem/1000"
+            className="w-full rounded border border-black/10 bg-transparent px-2 py-1 text-sm outline-none focus:border-black/30 dark:border-white/20"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => window.open(bojUrl, "_blank", "noopener,noreferrer")}
+              className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+            >
+              새 탭에서 열기
+            </button>
+            <button
+              onClick={() => setBojUrl("https://www.acmicpc.net/problem/1000")}
+              className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+            >
+              예시 URL
+            </button>
+          </div>
+          <div className="h-[460px] overflow-hidden rounded border border-black/10 bg-black/5 dark:border-white/10 dark:bg-black/20">
+            <iframe
+              key={bojUrl}
+              src={bojUrl}
+              title="BOJ companion"
+              className="h-full w-full"
+              onLoad={() => {
+                setIframeLoaded(true);
+                setIframeTimedOut(false);
+              }}
+            />
+          </div>
+          {iframeTimedOut && !iframeLoaded ? (
+            <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700/70 dark:bg-amber-900/20 dark:text-amber-200">
+              BOJ 페이지가 iframe 정책(X-Frame-Options/CSP)으로 차단될 수 있습니다. 이 경우 위의 새 탭에서 열기 버튼으로 문제를 여세요.
+            </div>
+          ) : null}
         </div>
       </div>
 
