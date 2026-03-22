@@ -181,8 +181,8 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
         </div>
       ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-[1.6fr,1fr,1fr]">
-        <div className="h-[620px] overflow-hidden rounded-md border border-black/10 dark:border-white/10">
+      <div className="grid gap-3 lg:grid-cols-[1.7fr,1fr] lg:auto-rows-min">
+        <div className="h-[52vh] min-h-[420px] overflow-hidden rounded-md border border-black/10 dark:border-white/10 lg:col-start-1 lg:h-[68vh]">
           <Editor
             height="100%"
             defaultLanguage="cpp"
@@ -199,7 +199,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
           />
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 lg:col-start-1">
           <div className="rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
             <h3 className="mb-2 text-sm font-semibold">입력(stdin)</h3>
             <textarea
@@ -254,7 +254,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
           </div>
         </div>
 
-        <div className="space-y-3 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
+        <div className="space-y-3 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827] lg:col-start-2 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(68vh+theme(spacing.12))] lg:overflow-auto">
           <h3 className="text-sm font-semibold">BOJ 컴패니언</h3>
           <label className="text-xs text-black/70 dark:text-white/70">문제 URL</label>
           <input
