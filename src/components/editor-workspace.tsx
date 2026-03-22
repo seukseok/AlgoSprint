@@ -35,8 +35,6 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
   const [outputs, setOutputs] = useState<OutputMap>(initialOutputs);
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const [bojUrl, setBojUrl] = useState("https://www.acmicpc.net");
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeTimedOut, setIframeTimedOut] = useState(false);
 
   useEffect(() => {
     const localCode = window.localStorage.getItem("algosprint:compiler:code");
@@ -104,15 +102,6 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [runAction]);
 
-  useEffect(() => {
-    setIframeLoaded(false);
-    setIframeTimedOut(false);
-    const timer = setTimeout(() => {
-      setIframeTimedOut(true);
-    }, 5000);
-
-    return () => clearTimeout(timer);
-  }, [bojUrl]);
 
   const onMount: OnMount = useCallback((editor, monaco) => {
     monaco.editor.defineTheme("github-dark", {
@@ -181,8 +170,8 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-[1fr,1.7fr] lg:auto-rows-min">
-        <div className="h-[52vh] min-h-[420px] overflow-hidden rounded-md border border-black/10 dark:border-white/10 lg:col-start-2 lg:h-[68vh]">
+      <div className="grid gap-3 lg:grid-cols-[0.95fr,1.75fr] lg:auto-rows-min">
+        <div className="h-[52vh] min-h-[420px] overflow-hidden rounded-md border border-black/10 dark:border-white/10 lg:col-start-2 lg:h-[72vh]">
           <Editor
             height="100%"
             defaultLanguage="cpp"
@@ -254,7 +243,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
           </div>
         </div>
 
-        <div className="space-y-3 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827] lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(68vh+theme(spacing.12))] lg:overflow-auto">
+        <div className="space-y-3 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827] lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(72vh+theme(spacing.12))] lg:overflow-auto">
           <h3 className="text-sm font-semibold">BOJ 컴패니언</h3>
           <label className="text-xs text-black/70 dark:text-white/70">문제 URL</label>
           <input
@@ -263,12 +252,18 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
             placeholder="https://www.acmicpc.net/problem/1000"
             className="w-full rounded border border-black/10 bg-transparent px-2 py-1 text-sm outline-none focus:border-black/30 dark:border-white/20"
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => window.open(bojUrl, "_blank", "noopener,noreferrer")}
               className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
             >
               새 탭에서 열기
+            </button>
+            <button
+              onClick={() => window.open(bojUrl, "boj_companion_window", "noopener,noreferrer,width=1100,height=900")}
+              className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+            >
+              팝업으로 열기
             </button>
             <button
               onClick={() => setBojUrl("https://www.acmicpc.net/problem/1000")}
@@ -277,23 +272,21 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
               예시 URL
             </button>
           </div>
-          <div className="h-[460px] overflow-hidden rounded border border-black/10 bg-black/5 dark:border-white/10 dark:bg-black/20">
-            <iframe
-              key={bojUrl}
-              src={bojUrl}
-              title="BOJ companion"
-              className="h-full w-full"
-              onLoad={() => {
-                setIframeLoaded(true);
-                setIframeTimedOut(false);
-              }}
-            />
+
+          <div className="rounded border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-800/60 dark:bg-blue-900/20 dark:text-blue-200">
+            BOJ는 보안 정책(X-Frame-Options/CSP)으로 인해 이 페이지 내부 임베딩을 지원하지 않습니다. 데스크탑에서는
+            <span className="font-semibold"> 새 탭/팝업 </span>
+            으로 문제를 띄우고, 오른쪽 에디터에서 풀이를 진행하세요.
           </div>
-          {iframeTimedOut && !iframeLoaded ? (
-            <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700/70 dark:bg-amber-900/20 dark:text-amber-200">
-              BOJ 페이지가 iframe 정책(X-Frame-Options/CSP)으로 차단될 수 있습니다. 이 경우 위의 새 탭에서 열기 버튼으로 문제를 여세요.
-            </div>
-          ) : null}
+
+          <div className="rounded-md border border-black/10 bg-black/5 p-3 text-xs text-black/75 dark:border-white/10 dark:bg-black/20 dark:text-white/70">
+            <p className="font-medium">권장 데스크탑 워크플로우</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4">
+              <li>문제 URL 붙여넣기 후 <span className="font-semibold">팝업으로 열기</span></li>
+              <li>오른쪽 에디터에서 코드 작성/컴파일/실행</li>
+              <li>코드 복사 후 BOJ 제출 페이지에 붙여넣기</li>
+            </ol>
+          </div>
         </div>
       </div>
 
