@@ -123,6 +123,16 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
 
   const buttonDisabled = useMemo(() => Boolean(running), [running]);
 
+  const resetEditor = useCallback(() => {
+    if (running) return;
+    const ok = window.confirm("에디터 코드를 초기 상태로 되돌릴까요? 현재 작성 내용은 사라집니다.");
+    if (!ok) return;
+    setCode(starterCode);
+    setOutputs(initialOutputs);
+    setActiveOutputTab("compile");
+    window.localStorage.setItem("algosprint:compiler:code", starterCode);
+  }, [running, starterCode]);
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
@@ -148,6 +158,13 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
             className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
           >
             코드 복사
+          </button>
+          <button
+            onClick={resetEditor}
+            disabled={buttonDisabled}
+            className="rounded border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
+          >
+            코드 초기화
           </button>
         </div>
         <label className="flex items-center gap-2 text-sm">
