@@ -14,6 +14,7 @@ const HAS_PRLIMIT = spawnSync("bash", ["-lc", "command -v prlimit >/dev/null 2>&
 const HAS_GPP = spawnSync("bash", ["-lc", "command -v g++ >/dev/null 2>&1"], { stdio: "ignore" }).status === 0;
 const COMPILER_BACKEND = (process.env.COMPILER_BACKEND ?? "auto").toLowerCase();
 const PISTON_URL = process.env.PISTON_URL ?? "https://emkc.org/api/v2/piston/execute";
+const WANDBOX_URL = process.env.WANDBOX_URL ?? "https://wandbox.org/api/compile.json";
 
 export type ExecutionResult = {
   success: boolean;
@@ -42,7 +43,7 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
     }
 
     if (shouldUsePiston()) {
-      return runWithPiston(source, stdin);
+      return runWithExternalCompiler(source, stdin);
     }
 
     const workspace = await createWorkspace("algosprint");
@@ -93,8 +94,26 @@ function shouldUsePiston() {
   return !HAS_GPP;
 }
 
-async function runWithPiston(source: string, stdin: string): Promise<ExecutionResult> {
+async function runWithExternalCompiler(source: string, stdin: string): Promise<ExecutionResult> {
   const started = Date.now();
+
+  const piston = await tryPiston(source, stdin, started);
+  if (piston) return piston;
+
+  const wandbox = await tryWandbox(source, stdin, started);
+  if (wandbox) return wandbox;
+
+  return {
+    success: false,
+    stdout: "",
+    stderr: `[${ERROR_CODES.RUNNER_RUNTIME_FAILED}] 외부 컴파일 서버 연결에 실패했습니다.`,
+    compileError: "외부 컴파일 서버 연결 실패",
+    exitCode: null,
+    elapsedMs: Date.now() - started,
+  };
+}
+
+async function tryPiston(source: string, stdin: string, started: number): Promise<ExecutionResult | null> {
   const candidates = [process.env.PISTON_CPP_VERSION, "17.0.0", "10.2.0"].filter(Boolean) as string[];
 
   for (const version of candidates) {
@@ -116,7 +135,6 @@ async function runWithPiston(source: string, stdin: string): Promise<ExecutionRe
       const data = (await response.json()) as {
         compile?: { code?: number | null; stdout?: string; stderr?: string; output?: string };
         run?: { code?: number | null; stdout?: string; stderr?: string; output?: string; signal?: string };
-        message?: string;
       };
 
       const compileStderr = data.compile?.stderr ?? "";
@@ -147,18 +165,60 @@ async function runWithPiston(source: string, stdin: string): Promise<ExecutionRe
         timedOut,
       };
     } catch {
-      // try next version
+      // next candidate/backend
     }
   }
 
-  return {
-    success: false,
-    stdout: "",
-    stderr: `[${ERROR_CODES.RUNNER_RUNTIME_FAILED}] 외부 컴파일 서버 연결에 실패했습니다.`,
-    compileError: "외부 컴파일 서버 연결 실패",
-    exitCode: null,
-    elapsedMs: Date.now() - started,
-  };
+  return null;
+}
+
+async function tryWandbox(source: string, stdin: string, started: number): Promise<ExecutionResult | null> {
+  try {
+    const response = await fetch(WANDBOX_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: source,
+        compiler: "gcc-head",
+        options: "warning,gnu++17",
+        stdin,
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = (await response.json()) as {
+      status?: string;
+      compiler_output?: string;
+      compiler_error?: string;
+      program_output?: string;
+      program_error?: string;
+      signal?: string;
+    };
+
+    const ce = `${data.compiler_error ?? ""}${data.compiler_output ?? ""}`.trim();
+    if (ce) {
+      return {
+        success: false,
+        stdout: "",
+        stderr: ce,
+        compileError: ce,
+        exitCode: 1,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const timedOut = /tim(e|ed)\s*out/i.test(data.program_error ?? "") || data.signal === "SIGKILL";
+    return {
+      success: !timedOut,
+      stdout: data.program_output ?? "",
+      stderr: data.program_error ?? "",
+      exitCode: timedOut ? 124 : 0,
+      elapsedMs: Date.now() - started,
+      timedOut,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function createWorkspace(prefix: string) {
