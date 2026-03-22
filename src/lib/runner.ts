@@ -11,6 +11,9 @@ let activeRuns = 0;
 const waitingResolvers: Array<() => void> = [];
 
 const HAS_PRLIMIT = spawnSync("bash", ["-lc", "command -v prlimit >/dev/null 2>&1"], { stdio: "ignore" }).status === 0;
+const HAS_GPP = spawnSync("bash", ["-lc", "command -v g++ >/dev/null 2>&1"], { stdio: "ignore" }).status === 0;
+const COMPILER_BACKEND = (process.env.COMPILER_BACKEND ?? "auto").toLowerCase();
+const PISTON_URL = process.env.PISTON_URL ?? "https://emkc.org/api/v2/piston/execute";
 
 export type ExecutionResult = {
   success: boolean;
@@ -36,6 +39,10 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
     const forbidden = checkForbiddenSource(source);
     if (forbidden) {
       return failureFromForbidden(forbidden);
+    }
+
+    if (shouldUsePiston()) {
+      return runWithPiston(source, stdin);
     }
 
     const workspace = await createWorkspace("algosprint");
@@ -78,6 +85,80 @@ export async function compileAndRun(source: string, stdin: string): Promise<Exec
 
 function sanitizeFileName(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
+}
+
+function shouldUsePiston() {
+  if (COMPILER_BACKEND === "piston") return true;
+  if (COMPILER_BACKEND === "local") return false;
+  return !HAS_GPP;
+}
+
+async function runWithPiston(source: string, stdin: string): Promise<ExecutionResult> {
+  const started = Date.now();
+  const candidates = [process.env.PISTON_CPP_VERSION, "17.0.0", "10.2.0"].filter(Boolean) as string[];
+
+  for (const version of candidates) {
+    try {
+      const response = await fetch(PISTON_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          language: "cpp",
+          version,
+          files: [{ content: source }],
+          stdin,
+          compile_timeout: RUNNER_LIMITS.compileTimeoutMs,
+          run_timeout: RUNNER_LIMITS.runTimeoutMs,
+        }),
+      });
+
+      if (!response.ok) continue;
+      const data = (await response.json()) as {
+        compile?: { code?: number | null; stdout?: string; stderr?: string; output?: string };
+        run?: { code?: number | null; stdout?: string; stderr?: string; output?: string; signal?: string };
+        message?: string;
+      };
+
+      const compileStderr = data.compile?.stderr ?? "";
+      const compileCode = data.compile?.code ?? 0;
+      if (compileCode !== 0) {
+        return {
+          success: false,
+          stdout: data.compile?.stdout ?? "",
+          stderr: compileStderr,
+          compileError: compileStderr || data.compile?.output || "Compilation failed",
+          exitCode: compileCode,
+          elapsedMs: Date.now() - started,
+          timedOut: /tim(e|ed)\s*out/i.test(compileStderr),
+        };
+      }
+
+      const runStdout = data.run?.stdout ?? data.run?.output ?? "";
+      const runStderr = data.run?.stderr ?? "";
+      const runCode = data.run?.code ?? null;
+      const timedOut = data.run?.signal === "SIGKILL" || /tim(e|ed)\s*out/i.test(runStderr);
+
+      return {
+        success: !timedOut && runCode === 0,
+        stdout: runStdout,
+        stderr: runStderr,
+        exitCode: runCode,
+        elapsedMs: Date.now() - started,
+        timedOut,
+      };
+    } catch {
+      // try next version
+    }
+  }
+
+  return {
+    success: false,
+    stdout: "",
+    stderr: `[${ERROR_CODES.RUNNER_RUNTIME_FAILED}] 외부 컴파일 서버 연결에 실패했습니다.`,
+    compileError: "외부 컴파일 서버 연결 실패",
+    exitCode: null,
+    elapsedMs: Date.now() - started,
+  };
 }
 
 async function createWorkspace(prefix: string) {

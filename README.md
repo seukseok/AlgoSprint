@@ -38,6 +38,23 @@ npm run dev
 - `GET /api/health`
   - 상태 확인
 
+## 배포 시 컴파일 백엔드(중요)
+
+Vercel 같은 서버리스 환경에는 기본적으로 `g++`가 없어 로컬 컴파일이 실패합니다.
+이 프로젝트는 보편적인 운영 방식을 위해 외부 컴파일 백엔드를 지원합니다.
+
+권장 설정:
+
+```bash
+COMPILER_BACKEND=auto
+PISTON_URL=https://emkc.org/api/v2/piston/execute
+PISTON_CPP_VERSION=17.0.0
+```
+
+- `auto`: 서버에 `g++`가 있으면 로컬 실행, 없으면 Piston 사용
+- `local`: 무조건 로컬 `g++` 사용
+- `piston`: 무조건 Piston API 사용
+
 ## 주의
 
 이 프로젝트는 BOJ 계정 자동 제출을 수행하지 않습니다.
