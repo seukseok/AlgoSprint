@@ -1,14 +1,13 @@
 "use client";
 
 import Editor, { OnMount } from "@monaco-editor/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { executeJudgeAction } from "@/lib/judge";
 import { JudgeAction } from "@/lib/types";
 
 const actions: { key: JudgeAction; label: string; shortcut: string }[] = [
   { key: "compile", label: "컴파일", shortcut: "Ctrl/Cmd + Shift + B" },
   { key: "run", label: "실행", shortcut: "Ctrl/Cmd + Enter" },
-  { key: "debug", label: "디버그", shortcut: "F5" },
   { key: "submit", label: "제출", shortcut: "Ctrl/Cmd + S" },
 ];
 
@@ -28,13 +27,15 @@ const IS_NON_SANDBOXED = process.env.NEXT_PUBLIC_RUNNER_SANDBOXED !== "1" || PUB
 export function EditorWorkspace({ starterCode }: { starterCode: string }) {
   const [code, setCode] = useState(starterCode);
   const [stdin, setStdin] = useState("");
-  const [sampleInput, setSampleInput] = useState("");
+
   const [activeTheme, setActiveTheme] = useState<EditorTheme>("vs-dark");
   const [running, setRunning] = useState<JudgeAction | null>(null);
   const [activeOutputTab, setActiveOutputTab] = useState<JudgeAction>("compile");
   const [outputs, setOutputs] = useState<OutputMap>(initialOutputs);
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const [bojUrl, setBojUrl] = useState("https://www.acmicpc.net");
+  const editorSectionRef = useRef<HTMLDivElement | null>(null);
+  const outputSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const localCode = window.localStorage.getItem("algosprint:compiler:code");
@@ -57,11 +58,20 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
     window.localStorage.setItem("algosprint:compiler:boj-url", bojUrl);
   }, [bojUrl]);
 
+  const scrollToOutput = useCallback(() => {
+    outputSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const scrollToEditor = useCallback(() => {
+    editorSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   const runAction = useCallback(
     async (action: JudgeAction) => {
       if (running) return;
       setRunning(action);
       setActiveOutputTab(action);
+      scrollToOutput();
       try {
         const result = await executeJudgeAction({ action, source: code, stdin });
         const metrics = result.timeMs || result.memoryKb ? `\n\n[metrics] time=${result.timeMs ?? "-"}ms memory=${result.memoryKb ?? "-"}KB` : "";
@@ -71,8 +81,42 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
         setRunning(null);
       }
     },
-    [code, stdin, running],
+    [code, stdin, running, scrollToOutput],
   );
+
+  const runCompileAndRun = useCallback(async () => {
+    if (running) return;
+
+    setRunning("compile");
+    setActiveOutputTab("compile");
+    scrollToOutput();
+
+    try {
+      const compileResult = await executeJudgeAction({ action: "compile", source: code, stdin: "" });
+      const compileMetrics =
+        compileResult.timeMs || compileResult.memoryKb
+          ? `\n\n[metrics] time=${compileResult.timeMs ?? "-"}ms memory=${compileResult.memoryKb ?? "-"}KB`
+          : "";
+      setOutputs((prev) => ({
+        ...prev,
+        compile: `[COMPILE] ${compileResult.success ? "성공" : "실패"}\n${compileResult.output}${compileMetrics}`,
+      }));
+
+      if (!compileResult.success) return;
+
+      setRunning("run");
+      setActiveOutputTab("run");
+      const runResult = await executeJudgeAction({ action: "run", source: code, stdin });
+      const runMetrics =
+        runResult.timeMs || runResult.memoryKb ? `\n\n[metrics] time=${runResult.timeMs ?? "-"}ms memory=${runResult.memoryKb ?? "-"}KB` : "";
+      setOutputs((prev) => ({
+        ...prev,
+        run: `[RUN] ${runResult.success ? "성공" : "실패"}\n${runResult.output}${runMetrics}`,
+      }));
+    } finally {
+      setRunning(null);
+    }
+  }, [code, stdin, running, scrollToOutput]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -87,7 +131,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
       }
       if (event.key === "F5") {
         event.preventDefault();
-        void runAction("debug");
+        void runCompileAndRun();
       }
       if (meta && (event.key === "S" || event.key === "s")) {
         event.preventDefault();
@@ -100,7 +144,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [runAction]);
+  }, [runAction, runCompileAndRun]);
 
 
   const onMount: OnMount = useCallback((editor, monaco) => {
@@ -148,6 +192,13 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
             </button>
           ))}
           <button
+            onClick={() => void runCompileAndRun()}
+            disabled={buttonDisabled}
+            className="rounded border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/20"
+          >
+            {running === "compile" || running === "run" ? "컴파일+실행 처리 중..." : "컴파일+실행"}
+          </button>
+          <button
             onClick={() => setShowShortcutHelp(true)}
             className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
           >
@@ -188,7 +239,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
       ) : null}
 
       <div className="grid gap-3 lg:grid-cols-[0.95fr,1.75fr] lg:auto-rows-min">
-        <div className="h-[52vh] min-h-[420px] overflow-hidden rounded-md border border-black/10 dark:border-white/10 lg:col-start-2 lg:h-[72vh]">
+        <div ref={editorSectionRef} className="h-[52vh] min-h-[420px] overflow-hidden rounded-md border border-black/10 dark:border-white/10 lg:col-start-2 lg:h-[72vh]">
           <Editor
             height="100%"
             defaultLanguage="cpp"
@@ -216,32 +267,8 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
             />
           </div>
 
-          <div className="rounded-md border border-black/10 bg-white p-3 text-xs dark:border-white/10 dark:bg-[#111827]">
-            <h3 className="mb-2 text-sm font-semibold">BOJ 붙여넣기 도우미</h3>
-            <p className="mb-2 text-black/70 dark:text-white/70">BOJ 문제 페이지의 예제 입력을 복사해 아래 칸에 붙여넣고, 적용 버튼으로 stdin에 반영하세요.</p>
-            <textarea
-              value={sampleInput}
-              onChange={(event) => setSampleInput(event.target.value)}
-              placeholder="예제 입력 임시 붙여넣기 영역"
-              className="h-24 w-full rounded border border-black/10 bg-transparent p-2 text-sm outline-none focus:border-black/30 dark:border-white/15"
-            />
-            <div className="mt-2 flex gap-2">
-              <button
-                onClick={() => setStdin(sampleInput)}
-                className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-              >
-                stdin에 적용
-              </button>
-              <button
-                onClick={() => navigator.clipboard.writeText(stdin)}
-                className="rounded border border-black/15 px-3 py-1 text-xs hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-              >
-                stdin 복사
-              </button>
-            </div>
-          </div>
 
-          <div className="rounded-md border border-black/10 bg-black p-3 text-xs text-green-300 dark:border-white/10">
+          <div ref={outputSectionRef} className="rounded-md border border-black/10 bg-black p-3 text-xs text-green-300 dark:border-white/10">
             <div className="mb-2 flex flex-wrap gap-2">
               {actions.map((action) => (
                 <button
@@ -255,7 +282,15 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
                 </button>
               ))}
             </div>
-            <h3 className="mb-2 text-sm font-semibold text-white">실행 결과</h3>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-white">실행 결과</h3>
+              <button
+                onClick={scrollToEditor}
+                className="rounded border border-white/30 px-2 py-1 text-[11px] text-white hover:bg-white/10"
+              >
+                코드로 이동
+              </button>
+            </div>
             <pre className="whitespace-pre-wrap">{running === activeOutputTab ? `${actions.find((a) => a.key === running)?.label} 실행 중...` : outputs[activeOutputTab]}</pre>
           </div>
         </div>
@@ -321,6 +356,10 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
                   <span className="text-black/60 dark:text-white/60">{action.shortcut}</span>
                 </li>
               ))}
+              <li className="flex justify-between">
+                <span>컴파일+실행</span>
+                <span className="text-black/60 dark:text-white/60">F5</span>
+              </li>
               <li className="flex justify-between">
                 <span>도움말 토글</span>
                 <span className="text-black/60 dark:text-white/60">Shift + ?</span>
