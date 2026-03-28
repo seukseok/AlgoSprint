@@ -28,7 +28,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
   const [code, setCode] = useState(starterCode);
   const [stdin, setStdin] = useState("");
 
-  const [activeTheme, setActiveTheme] = useState<EditorTheme>("vs-dark");
+  const [activeTheme, setActiveTheme] = useState<EditorTheme>("github-dark");
   const [running, setRunning] = useState<JudgeAction | null>(null);
   const [activeOutputTab, setActiveOutputTab] = useState<JudgeAction>("compile");
   const [outputs, setOutputs] = useState<OutputMap>(initialOutputs);
@@ -181,6 +181,13 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#111827]">
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => void runCompileAndRun()}
+            disabled={buttonDisabled}
+            className="rounded border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/20"
+          >
+            {running === "compile" || running === "run" ? "컴파일+실행 처리 중..." : "컴파일+실행"}
+          </button>
           {actions.map((action) => (
             <button
               key={action.key}
@@ -191,13 +198,6 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
               {running === action.key ? `${action.label} 처리 중...` : action.label}
             </button>
           ))}
-          <button
-            onClick={() => void runCompileAndRun()}
-            disabled={buttonDisabled}
-            className="rounded border border-blue-300 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/20"
-          >
-            {running === "compile" || running === "run" ? "컴파일+실행 처리 중..." : "컴파일+실행"}
-          </button>
           <button
             onClick={() => setShowShortcutHelp(true)}
             className="rounded border border-black/15 px-3 py-1 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
