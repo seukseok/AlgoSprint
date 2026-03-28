@@ -1,6 +1,6 @@
 "use client";
 
-import Editor, { OnMount } from "@monaco-editor/react";
+import Editor, { BeforeMount, OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { executeJudgeAction } from "@/lib/judge";
 import { JudgeAction } from "@/lib/types";
@@ -147,7 +147,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
   }, [runAction, runCompileAndRun]);
 
 
-  const onMount: OnMount = useCallback((editor, monaco) => {
+  const defineGithubDarkTheme = useCallback((monaco: Parameters<BeforeMount>[0]) => {
     monaco.editor.defineTheme("github-dark", {
       base: "vs-dark",
       inherit: true,
@@ -162,8 +162,13 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
         "editorCursor.foreground": "#c9d1d9",
       },
     });
-    editor.focus();
   }, []);
+
+  const onMount: OnMount = useCallback((editor, monaco) => {
+    defineGithubDarkTheme(monaco);
+    monaco.editor.setTheme("github-dark");
+    editor.focus();
+  }, [defineGithubDarkTheme]);
 
   const buttonDisabled = useMemo(() => Boolean(running), [running]);
 
@@ -246,6 +251,7 @@ export function EditorWorkspace({ starterCode }: { starterCode: string }) {
             value={code}
             onChange={(value) => setCode(value ?? "")}
             theme={activeTheme}
+            beforeMount={defineGithubDarkTheme}
             onMount={onMount}
             options={{
               fontSize: 14,
